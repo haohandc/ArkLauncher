@@ -14,6 +14,29 @@ WHY THIS IS A SCRIPT WITH GATES
     and the produced class is checked for the property name that only the new
     code contains.
 
+TWO PHASES, AND WHY THE SECOND ONE EXISTS (added 2026-09-28)
+    This script now compiles BOTH modules of the patch:
+
+        arc-core            GLVersion, GLVersion$GlType, Shader  -> arcbuild/core
+        backend-sdl3        SdlApplication, SdlInput, SdlFiles   -> arcbuild/sdl3
+
+    Until this change only the second phase existed. patch_mindustry.py expects
+    the arc-core three in arcbuild/core and reads them as an INPUT, but nothing
+    wrote them: the directory had been populated by hand and was later found
+    empty, which meant the patch could not be rebuilt at all. The sources were
+    intact and did carry the changes, so the gap was purely the missing compile.
+
+    arc-core goes first because the backend compile puts arcbuild/core on its
+    class path.
+
+    Both phases gate twice, and the two gates are different in kind:
+      * source gates, against the SOURCE TEXT of the change
+      * class gates, against the COMPILED BYTES
+    For the SDL3 classes the marker happens to be a string literal, which exists
+    in both places, so one marker served both gates. That is not true in general
+    -- GLVersion's marker is a method descriptor, which javac writes and the
+    source never contains -- so the two are kept separate here.
+
 Usage:  python build_arc_patch.py
 """
 
@@ -82,10 +105,173 @@ MARKER7 = b"syncMouseToFinger"
 MARKER5 = b"arc.sdl.chooserPath"
 MARKER6 = b"chooserPath"
 
+# ---------------------------------------------------------------------------
+# arc-core: the two classes patched in the core module (not the SDL3 backend).
+#
+# ⚠️ Added 2026-09-28. Until this change NOTHING in this repository produced
+# these three class files -- patch_mindustry.py expects them in arcbuild/core
+# and treats that directory as an INPUT, but no script wrote it. The directory
+# was populated by hand, once, and then lost; when this was investigated the
+# directory was empty and the classes could not be rebuilt at all.
+#
+# That is the same shape of gap as the un-reproducible libarcarm64.so, except
+# this one is fixable: the sources are on disk, and the changes in them are
+# real (checked against upstream below).
+# ---------------------------------------------------------------------------
+SRC_GLVERSION = os.path.join(ARC, "arc-core", "src",
+                             "arc", "graphics", "gl", "GLVersion.java")
+SRC_SHADER = os.path.join(ARC, "arc-core", "src",
+                          "arc", "graphics", "gl", "Shader.java")
+OUT_CORE = os.path.join(ARCBUILD, "core")
+
+# Present in the new GLVersion code, absent from the old. The patch adds
+#     if(versionString != null && versionString.contains("OpenGL ES")) ...
+# against the old first line, which only tested appType == android -- so the
+# call it introduces is the marker. It is the String.contains descriptor rather
+# than the literal "OpenGL ES" because that literal is already in the upstream
+# class (its version parsing uses it), which would make it prove nothing.
+MARKER8 = b"(Ljava/lang/CharSequence;)Z"
+# Present in the new Shader code, absent from the old: the import of GLVersion
+# and the switch from app-type to GL-flavour means Shader.class now REFERENCES
+# GLVersion$GlType, which the upstream class does not.
+MARKER9 = b"GLVersion$GlType"
+
+# ⚠️ SOURCE markers are a DIFFERENT thing from the class markers above, and this
+# is where that distinction had to be made explicit.
+#
+# The markers above are checked against the COMPILED BYTES. The three SDL3
+# markers happen to be string literals, which exist in the source and in the
+# bytes alike, so one marker served both gates and the difference never showed.
+# MARKER8 is a method descriptor: it is written by javac and appears NOWHERE in
+# the source. Feeding it to the source gate fails every time -- which is exactly
+# what happened the first time this was run.
+#
+# So the source gate gets its own markers, taken from the source text of the
+# change itself.
+SRC_MARK_GLVERSION = b"!= null && versionString.contains"
+SRC_MARK_SHADER = b"glType == GlType.GLES"
+
+# GLVersion$GlType carries no behaviour change -- it is recompiled because it
+# sits next to GLVersion, not because we edited it. There is therefore no marker
+# that could tell our copy from the upstream one, and it is checked for the
+# bytecode version alone. Saying so here is the point: a marker would have to be
+# invented, and an invented marker on an unchanged class proves nothing.
+CORE_PRODUCES = ["arc/graphics/gl/GLVersion.class",
+                 "arc/graphics/gl/GLVersion$GlType.class",
+                 "arc/graphics/gl/Shader.class"]
+
 PRODUCES = ["SdlApplication.class",
             "SdlApplication$SdlError.class",
             "SdlApplication$1.class",
             "SdlInput.class"]
+
+
+def build_core():
+    """Compile the patched arc-core classes into ARCBUILD/core.
+
+    Runs FIRST, because the SDL3 backend compile below puts ARCBUILD/core on its
+    class path.
+
+    ARCBUILD/core is deliberately absent from this compile's OWN class path: it
+    is the thing being rebuilt, and leaving it there would let a stale copy
+    satisfy javac. The Arc classes these two files depend on are reached through
+    -sourcepath instead, and -implicit:none keeps javac from writing them out --
+    only the three classes we actually patch land in the output.
+    """
+    for path, markers in ((SRC_GLVERSION, (SRC_MARK_GLVERSION,)),
+                          (SRC_SHADER, (SRC_MARK_SHADER,))):
+        if not os.path.isfile(path):
+            print("FAIL missing %s" % path)
+            return 1
+        src_text = open(path, encoding="utf-8", errors="replace").read()
+        for marker in markers:
+            name = marker.decode()
+            if name not in src_text:
+                print("FAIL %s does not contain the change (%s)."
+                      % (os.path.basename(path), name))
+                print("     Edit it first.")
+                return 1
+            print("%s carries the change: %s" % (os.path.basename(path), name))
+
+    # Shader.java references org.lwjgl.opengl.*, so the LWJGL jars are needed even
+    # though this is the core module.
+    jars = [os.path.join(LWJGL, f) for f in sorted(os.listdir(LWJGL))
+            if f.endswith(".jar")]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cmd = [JAVAC, "--release", "17", "-nowarn", "-implicit:none",
+               "-encoding", "UTF-8",
+               "-sourcepath", CORE_ROOT,
+               "-d", tmp]
+        if jars:
+            cmd += ["-cp", os.pathsep.join(jars)]
+        cmd += [SRC_GLVERSION, SRC_SHADER]
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.returncode != 0:
+            print("FAIL javac (arc-core)")
+            print(r.stdout)
+            print(r.stderr)
+            return 1
+        out = (r.stdout or "") + (r.stderr or "")
+        if out.strip():
+            print(out)
+
+        # Same two-part gate as the backend: bytecode major, then a marker that
+        # only the patched source produces. GLVersion$GlType is checked for the
+        # major version only -- see the note on CORE_PRODUCES.
+        for cls, markers in (("GLVersion.class", (MARKER8,)),
+                             ("GLVersion$GlType.class", ()),
+                             ("Shader.class", (MARKER9,))):
+            produced = os.path.join(tmp, "arc", "graphics", "gl", cls)
+            if not os.path.isfile(produced):
+                print("FAIL javac produced no %s" % cls)
+                return 1
+            blob = open(produced, "rb").read()
+            major = struct.unpack(">H", blob[6:8])[0]
+            if major != 61:
+                print("FAIL %s bytecode major is %d, the jar's classes are 61"
+                      % (cls, major))
+                return 1
+            for marker in markers:
+                if marker not in blob:
+                    print("FAIL the compiled %s does not contain %r" % (cls, marker))
+                    return 1
+            print("compiled: %s major=61%s"
+                  % (cls, "" if not markers else
+                     ", contains " + ", ".join(repr(m.decode()) for m in markers)))
+
+        # Clear only the three files this step owns. Wiping the directory would
+        # also delete anything else a future step puts there, and the whole point
+        # of this function is that the directory has an owner now.
+        for rel in CORE_PRODUCES:
+            stale = os.path.join(OUT_CORE, rel.replace("/", os.sep))
+            if os.path.isfile(stale):
+                os.remove(stale)
+        installed = 0
+        for rel in CORE_PRODUCES:
+            src_p = os.path.join(tmp, rel.replace("/", os.sep))
+            dst_p = os.path.join(OUT_CORE, rel.replace("/", os.sep))
+            os.makedirs(os.path.dirname(dst_p), exist_ok=True)
+            shutil.copyfile(src_p, dst_p)
+            installed += 1
+        print("installed %d class file(s) into %s" % (installed, OUT_CORE))
+
+    # Verify from the installed copy, not from the temporary one.
+    for rel, markers in (("arc/graphics/gl/GLVersion.class", (MARKER8,)),
+                         ("arc/graphics/gl/GLVersion$GlType.class", ()),
+                         ("arc/graphics/gl/Shader.class", (MARKER9,))):
+        p = os.path.join(OUT_CORE, rel.replace("/", os.sep))
+        if not os.path.isfile(p):
+            print("FAIL %s was not installed" % rel)
+            return 1
+        blob = open(p, "rb").read()
+        for marker in markers:
+            if marker not in blob:
+                print("FAIL the installed %s lost %r" % (rel, marker))
+                return 1
+    print("installed core copies verified")
+    return 0
 
 
 def main():
@@ -106,6 +292,12 @@ def main():
                 print("     Edit it first.")
                 return 1
             print("%s carries the change: %s" % (os.path.basename(path), name))
+
+    # arc-core first: the SDL3 compile below puts ARCBUILD/core on its class path,
+    # so it has to exist and be current before that compile runs.
+    core_rc = build_core()
+    if core_rc != 0:
+        return core_rc
 
     jars = [os.path.join(LWJGL, f) for f in sorted(os.listdir(LWJGL))
             if f.endswith(".jar")]
