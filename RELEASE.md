@@ -90,7 +90,7 @@ HarmonyOS 7 / API 26 真机验证：**HUAWEI MatePad Pro 12.2" 2025** 平板、
 
 | 设备 | 自签名安装 | 应用商店 |
 |---|---|---|
-| **平板** | 可用 | ACL 批准后可用 |
+| **平板** | 可用 | ACL 已获批，待 AppTest |
 | **手机** | 部分可用（见下） | **不提供** |
 | **PC · 2in1** | 未测试 | 未测试 |
 
@@ -140,6 +140,24 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 （签名按上面「怎么安装」配置）
 
 ## 版本历史
+
+### 1.0.0.2 — 2026-09-28 · 1.0.0 的 RC 2
+
+已完整支持所有 Mindustry 原生功能。
+
+**新增**
+
+| 项目 | 说明 |
+|---|---|
+| **悬浮球 · 导出诊断** | 悬浮球菜单新增「导出诊断」，一键把运行日志导出到 `Download/com.haohandc.mindustryark/diagnostics/`，方便反馈问题 |
+| **崩溃报告自动导出** | 应用崩溃后，下次启动会自动把崩溃报告写到同一个 `diagnostics/` 文件夹 |
+
+**变动**
+
+| 项目 | 说明 |
+|---|---|
+| **应用图标** | 换为手绘图标 |
+| **仓库首页** | 仓库首页改为中文，英文版在 `README.en.md` |
 
 ### 1.0.0.1 — 2026-09-22 · 1.0.0 的 RC 1
 
@@ -297,7 +315,7 @@ Only what you should know *before downloading* is kept here:
 
 | Device | Self-signed install | App store |
 |---|---|---|
-| **Tablet** | Works | Available once the ACL is approved |
+| **Tablet** | Works | ACL approved; pending AppTest |
 | **Phone** | Partial (see below) | **Not offered** |
 | **PC · 2in1** | Untested | Untested |
 
@@ -354,6 +372,24 @@ bash deploy.sh          # build + verify + install + launch + collect log
 (configure signing as under "Installing")
 
 ## Changelog
+
+### 1.0.0.2 — 2026-09-28 · RC 2 of 1.0.0
+
+Full support for all of Mindustry's native features.
+
+**Added**
+
+| Item | Notes |
+|---|---|
+| **Floating ball · Export diagnostics** | A new row in the floating ball's menu writes the run logs to `Download/com.haohandc.mindustryark/diagnostics/`, to make reporting a problem easier |
+| **Crash reports export themselves** | After a crash, the next launch writes the crash report to the same `diagnostics/` folder automatically |
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **App icon** | Replaced with a hand-drawn icon |
+| **Repository front page** | The repository README is now Chinese; the English one is `README.en.md` |
 
 ### 1.0.0.1 — 2026-09-22 · RC 1 of 1.0.0
 
