@@ -154,6 +154,12 @@ include_directories(${NATIVEAPP_ROOT_PATH}
 
 # This is libmain.so -- the library name must be "main"
 add_library(main SHARED launcher.c)
+# A one-function bridge so ArkTS can ask the platform about Secure Shield mode
+# before it creates the XComponent that starts the game. Deliberately NOT folded
+# into the SDL3 module: that is upstream code this project already patches, and
+# a device-security query has nothing to do with it.
+add_library(shield SHARED shield.c)
+target_link_libraries(shield PUBLIC libace_napi.z.so dl)
 # libhilog_ndk.z.so: the launcher mirrors its diagnostics there, because a
 # RELEASE-signed build's sandbox log files cannot be read over hdc -- measured,
 # "Permission denied", and with no faultlog entry either. Without this the store
