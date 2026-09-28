@@ -1,29 +1,24 @@
-/*
- * Mindustry Launcher for HarmonyOS -- start a real JVM, then hand over to Java.
+/* [A]
+ * HarmonyOS 版 Mindustry 启动器 —— 先启一个真正的 JVM，然后交给 Java。
  *
- * The step the plan called "the biggest unknown": create a Java VM from native
- * code on HarmonyOS, on a thread SDL created rather than the process main thread.
+ * 计划里被称作「最大的未知数」的那一步：在 HarmonyOS 上、在 SDL 创建出来的线程（而非进程
+ * 主线程）里，从 native 代码创建一个 Java VM。
  *
- * WHERE THINGS LIVE (current design)
- *   The JDK ships as plain directories under entry/libs/arm64-v8a/jdk21/ and is
- *   therefore unpacked by the HAP installer straight into the app's executable
- *   library area -- there is no runtime extraction step and no first-launch cost:
+ * 东西都在哪（当前设计）
+ *   JDK 以普通目录的形式放在 entry/libs/arm64-v8a/jdk21/ 下，因此由 HAP 安装器直接解包进
+ *   应用的可执行库区 —— 没有运行时解压步骤，也没有首次启动开销：
  *
  *       entry/libs/arm64-v8a/jdk21/lib/server/libjvm_real.so
  *           -> /data/storage/el1/bundle/libs/<abi>/jdk21/lib/server/libjvm_real.so
  *
- *   Only the HAP's own lib area is executable; the writable sandbox (el2) is not,
- *   even holding ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY. Shipping the
- *   JDK as libraries therefore solves the executable-mapping problem for free.
+ *   只有 HAP 自己的 lib 区是可执行的；可写的沙箱（el2）不是，即使持有
+ *   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY 也一样。所以把 JDK 当作库来分发，
+ *   顺带免费解决了可执行映射的问题。
  *
- *   Nesting the real libjvm three levels deep is what makes HotSpot derive the
- *   correct java.home (it strips three path components and requires
- *   "<java.home>/lib/<module image>"); see prep_vendor.py for the full chain,
- *   including why an anchor library is needed to satisfy the bare-name
- *   DT_NEEDED that every other JDK library declares.
+ *   把真正的 libjvm 嵌套三层，正是让 HotSpot 推导出正确 java.home 的原因（它剥掉三层路径
+ *   分量，并要求 "<java.home>/lib/<module image>" 存在）；完整链路见 prep_vendor.py，
+ *   其中包括为什么需要一个 anchor 库，来满足其它每个 JDK 库都声明的裸名 DT_NEEDED。
  *
- * ASCII ONLY -- clang decodes source as GBK on a Chinese Windows locale, so a
- * UTF-8 comment can decode into a literal "*" "/" that ends the comment early.
  */
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -46,8 +41,8 @@
 #include <ucontext.h>
 #include <sys/types.h>
 #include <unistd.h>
-/* For probe_network: see the note on it for why the network is probed by hand
- * rather than inferred from the one error the game happens to print. */
+/* [A] 关于 probe_network：为什么网络是手工探测、而不是从游戏恰好打印的那条错误里推断，
+ * 见它自己那处的说明。 */
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -55,173 +50,142 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 
-/*
- * THE JDK LIVES INSIDE THE HAP'S NATIVE-LIB AREA -- and that is the whole trick.
+/* [A]
+ * JDK 住在 HAP 的原生库区里 —— 这就是整件事的关键。
  *
- * Two rules had to be satisfied at once:
+ * 有两条规则必须同时满足：
  *
- *   (a) Only the HAP's own lib area is executable. A library read out of the
- *       app's writable sandbox cannot be dlopen'd, even with
- *       ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY held. Measured:
+ *   (a) 只有 HAP 自己的 lib 区是可执行的。从应用可写沙箱里读出来的库无法被 dlopen，即使
+ *       持有 ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY 也不行。实测：
  *           dlopen("<bundle>/libSDL3.so")                    -> OK
  *           dlopen("<sandbox>/.../libSDL3_copy.so")          -> fails
- *       (The permission covers anonymous executable memory only; AMCL gets
- *        around it with a hand-written ELF loader -- we do not need that.)
- *       !! "Anonymous executable memory" is exactly what a JIT needs, and it is
- *       NOT universally available: measured 2026-09-22, a HarmonyOS 6.1.1
- *       (API 24) device refused mmap(RWX) with errno=22 while running the
- *       release-signed store package. See RELEASE-MAINTENANCE.md 2.11.
+ *       （该权限只覆盖匿名可执行内存；AMCL 靠手写的 ELF loader 绕过去 —— 我们不需要。）
+ *       ！！「匿名可执行内存」恰恰是 JIT 所需要的东西，而且它并非普遍可用：2026-09-22 实测，
+ *       一台 HarmonyOS 6.1.1（API 24）设备在运行 release 签名的商店包时，用 errno=22 拒绝了
+ *       mmap(RWX)。见 RELEASE-MAINTENANCE.md 2.11。
  *
- *   (b) HotSpot derives java.home from libjvm.so's own path: it strips three
- *       path components and then requires "<java.home>/lib/modules" to exist.
- *       -Djava.home is overwritten unconditionally (os_linux.cpp,
- *       Arguments::set_java_home).
+ *   (b) HotSpot 从 libjvm.so 自身的路径推导 java.home：它剥掉三层路径分量，然后要求
+ *       "<java.home>/lib/modules" 存在。-Djava.home 会被无条件覆盖（os_linux.cpp，
+ *       Arguments::set_java_home）。
  *
- * So the JDK is shipped as entry/libs/arm64-v8a/jdk21/ (recursively), landing at:
+ * 所以 JDK 以 entry/libs/arm64-v8a/jdk21/ 的形式（递归地）分发，落点为：
  *
  *     <bundle>/libs/arm64/jdk21/lib/server/libjvm.so
  *                            ^-- strip 1 -> .../jdk21/lib/server
  *                            ^-- strip 2 -> .../jdk21/lib
  *                            ^-- strip 3 -> .../jdk21   = java.home
- *     <bundle>/libs/arm64/jdk21/lib/modules      <- exists, so set_boot_path passes
+ *     <bundle>/libs/arm64/jdk21/lib/modules      <- 存在，于是 set_boot_path 通过
  *
- * Everything is executable, java.home comes out right, and nothing has to be
- * unpacked at runtime. (Same layout AMCL's ELF loader produces, minus the
- * loader.)
+ * 一切都是可执行的，java.home 结果正确，运行时也无需解包任何东西。（与 AMCL 的 ELF loader
+ * 产出的布局相同，只是没有那个 loader。）
  */
 #define JDK_HOME    "/data/storage/el1/bundle/libs/arm64/jdk21"
 #define JDK_LIB     JDK_HOME "/lib"
-/* The REAL JVM, nested at <java.home>/lib/server/ so HotSpot derives the right
- * java.home. Its SONAME has been blanked and it is not on the loader's search
- * path -- reach it through the anchor (JDK_ANCHOR), which depends on it. */
+/* [A] 真正的 JVM，嵌套在 <java.home>/lib/server/ 下，好让 HotSpot 推导出正确的
+ * java.home。它的 SONAME 已被清空，且不在 loader 的搜索路径上 —— 要通过依赖它的 anchor
+ * （JDK_ANCHOR）来触达它。 */
 #define JDK_LIBM        JDK_LIB "/server/libjvm_real.so"
 
-/* An otherwise-empty libjvm.so sitting on the search path. See libjvm_anchor.c:
- * it exists only so the bare-name DT_NEEDED of the other JDK libraries resolves,
- * and it pulls the real JVM in through its own dependency chain. */
+/* [A] 一个除此之外空无一物的 libjvm.so，放在搜索路径上。见 libjvm_anchor.c：
+ * 它存在的唯一目的，是让其它 JDK 库的裸名 DT_NEEDED 得以解析，并经由它自己的依赖链把
+ * 真正的 JVM 拉进来。 */
 #define JDK_ANCHOR  BUNDLE_LIBS "/libjvm.so"
 #define BUNDLE_LIBS "/data/storage/el1/bundle/libs/arm64"
 
-/*
- * The game, delivered as a jar that is NAMED like a shared library.
+/* [A]
+ * 游戏本体，以「名字看起来像共享库」的 jar 形式交付。
  *
- * hvigor copies entry/libs/arm64-v8a/** into the HAP on one condition only: the
- * file name ends in ".so". Content is not inspected. Measured on the built HAP:
- * the 140,523,131-byte module image ships as lib/jdk21/lib/jimg.so, and the
- * 25,322,128-byte real JVM as libjvm_real.so -- both at exactly their project
- * sizes, byte for byte -- while every file under jdk21/conf/ was dropped without
- * a warning, because those names do not end in ".so".
+ * hvigor 把 entry/libs/arm64-v8a/** 拷进 HAP 只有一个条件：文件名以 ".so" 结尾。内容不做
+ * 检查。在构建出的 HAP 上实测：140,523,131 字节的 module image 以 lib/jdk21/lib/jimg.so 的
+ * 形式分发，25,322,128 字节的真正 JVM 以 libjvm_real.so 的形式分发 —— 两者都恰好是项目里的
+ * 尺寸，逐字节一致 —— 而 jdk21/conf/ 下的每个文件都被无声丢弃，因为那些名字不以 ".so" 结尾。
  *
- * So the jar takes the same road. It is not an ELF any more than the module
- * image is, and it survives just as untouched.
+ * 于是 jar 走同一条路。它并不比 module image 更像 ELF，也同样原封不动地活了下来。
  *
- * The JVM does not care about the extension either: a class path entry is opened
- * as an archive by content, not by name.
+ * JVM 也不关心扩展名：class path 条目是按内容、而不是按名字被当作归档打开的。
  *
- * The alternative -- writing it to the sandbox at first launch -- was rejected as
- * unnecessary: the bundle library area is readable by the app (the module image
- * is read from exactly there, and the VM cannot boot without it), so there is
- * nothing to copy and no first-launch cost. The sandbox is only unusable for
- * EXECUTABLE mappings, which this is not.
+ * 另一条路 —— 首次启动时把它写进沙箱 —— 被认为没有必要而否决了：bundle 库区对应用可读
+ * （module image 正是从那里读的，没有它 VM 无法启动），所以没什么要拷的，也没有首次启动开销。
+ * 沙箱唯一不可用的地方是【可执行】映射，而这并不是。
  *
- * It lives in a SUBDIRECTORY rather than directly beside libmain.so. The
- * top-level names in that directory are the ones the platform treats as native
- * libraries, and a jar is not an ELF; keeping it one level down matches where the
- * module image already sits and is known not to be touched.
+ * 它放在一个子目录里，而不是直接挨着 libmain.so。那个目录顶层的名字，是平台当作原生库对待的
+ * 那些；而 jar 不是 ELF；让它低一层，正好与 module image 已经待的位置一致，且已知不会被碰。
  */
 #define GAME_JAR    BUNDLE_LIBS "/game/mindustry.so"
 
-/*
- * LWJGL, in two halves -- and they go to two different places for two different
- * reasons. See prep_lwjgl.py.
+/* [A]
+ * LWJGL，分两半 —— 它们因为两个不同的原因去了两个不同的地方。见 prep_lwjgl.py。
  *
- * The game jar does not contain LWJGL. Arc's SDL3 backend calls the platform
- * through org.lwjgl.opengl.* and org.lwjgl.sdl.*, and those classes came from
- * AMCL's libraries directory when the game ran under AMCL. This launcher has to
- * supply them itself or the backend cannot even be loaded.
+ * 游戏 jar 里不含 LWJGL。Arc 的 SDL3 后端通过 org.lwjgl.opengl.* 和 org.lwjgl.sdl.* 调用
+ * 平台，而这些类在游戏跑在 AMCL 下时来自 AMCL 的 libraries 目录。这个启动器必须自己提供它们，
+ * 否则那个后端根本加载不了。
  *
- *   LWJGL_LIBS  real ELF shared objects: the dyncall dispatch in liblwjgl.so and
- *               the OpenGL binding in liblwjgl_opengl.so. They need no disguise,
- *               but they must be in the executable area.
- *   LWJGL_JARS  not ELF at all; renamed to .so only because that is the sole
- *               condition on which hvigor copies a file into the HAP.
+ *   LWJGL_LIBS  真正的 ELF 共享对象：liblwjgl.so 里的 dyncall 分发，以及
+ *               liblwjgl_opengl.so 里的 OpenGL 绑定。它们不需要任何伪装，但必须待在可执行区。
+ *   LWJGL_JARS  根本不是 ELF；改成 .so 只是因为那是 hvigor 把文件拷进 HAP 的唯一条件。
  *
- * THERE IS NO libSDL3.so IN LWJGL_LIBS, and that is deliberate -- see the note
- * on opt_lwjglpath below. There used to be one: LWJGL's own build of SDL3, on
- * the reasoning that LWJGL's sdl bindings are generated against a specific
- * symbol list while SDL's development branch renames things, so the matching
- * pair would avoid SDL drift. That reasoning is still sound in general, but it
- * was overtaken by a worse problem: a second libSDL3.so anywhere means two
- * independent mappings of SDL3 in one process, each with its own static
- * variables, and this project lost a round to exactly that -- two event queues,
- * a window created in one copy and surface callbacks delivered to the other.
- * So the loader is pointed at ONE SDL3, the one this project builds from
- * entry/src/main/cpp/SDL/, and nothing else provides that name.
+ * LWJGL_LIBS 里【没有】libSDL3.so，这是刻意的 —— 见下面关于 opt_lwjglpath 的说明。曾经有过
+ * 一个：LWJGL 自己构建的 SDL3，理由是 LWJGL 的 sdl 绑定是针对一份特定符号清单生成的，而 SDL 的
+ * 开发分支会改名，所以这一对配套的能避免 SDL 漂移。那个理由总体上仍然成立，但被一个更糟的问题
+ * 超越了：任何位置出现第二个 libSDL3.so，就意味着一个进程里有两份互相独立的 SDL3 映射，各自
+ * 带自己的静态变量，而这个项目正好在这上面栽过一回 —— 两个事件队列，窗口在一个副本里创建，
+ * surface 回调却投递给另一个。所以 loader 被指向【唯一】的 SDL3，也就是本项目从
+ * entry/src/main/cpp/SDL/ 构建出来的那个，别的什么都不提供这个名字。
  */
 #define LWJGL_LIBS  BUNDLE_LIBS "/lwjgl"
 #define LWJGL_JARS  BUNDLE_LIBS "/lwjgl-java"
 
-/*
- * Arc's own natives, shipped here so they can be loaded at all.
+/* [A]
+ * Arc 自己的 natives，之所以在这儿分发，是为了让它们至少能被加载。
  *
- * Arc reads them out of the jar, writes them under java.io.tmpdir, and calls
- * System.load on the copy -- and that copy cannot be dlopen'd, because the app's
- * writable areas are not executable on this platform while the read-only bundle
- * is. Measured with two libraries across six candidate directories, plus a
- * bundle control that passed: see probe_sandbox_exec().
+ * Arc 把它们从 jar 里读出来，写到 java.io.tmpdir 下，然后对副本调用 System.load ——
+ * 而这个副本无法被 dlopen，因为在这个平台上应用的可写区域不可执行，只读的 bundle 才可执行。
+ * 用两个库、跨六个候选目录实测过，外加一个通过的 bundle 对照：见 probe_sandbox_exec()。
  *
- * So they are loaded from here instead, before the game starts, and Arc is told
- * they are already loaded. setLoaded(String) is public and static, and load()
- * returns immediately for a marked name -- the same call Arc makes for itself.
- * This is not a workaround being smuggled in; it is the loader's own contract.
+ * 所以改为在游戏启动前就从这里加载它们，并告诉 Arc 它们已经加载好了。setLoaded(String) 是
+ * public static，而 load() 对已标记的名字会立即返回 —— 这和 Arc 为自己所做的调用相同。
+ * 这不是偷偷塞进来的变通做法；这是 loader 自己的契约。
  */
 #define ARC_LIBS    BUNDLE_LIBS "/arc"
 
-/*
- * Our own class, which exists only so that System.load is called from Java.
+/* [A]
+ * 我们自己的类，它存在的唯一目的，是让 System.load 从 Java 里被调用。
  *
- * System.load is @CallerSensitive: it registers the library against the class
- * loader of its caller. Called through JNI there is no caller frame, so the
- * library ends up on the bootstrap loader and the game's classes cannot see its
- * symbols -- the library loads and is still unusable. See NativeLoader.java.
+ * System.load 是 @CallerSensitive 的：它把库注册到调用者所在的类加载器上。通过 JNI 调用时
+ * 没有调用者栈帧，于是库落在了 bootstrap loader 上，游戏的类看不见它的符号 —— 库加载了，
+ * 却仍然不可用。见 NativeLoader.java。
  */
 #define HELPER_JAR  BUNDLE_LIBS "/launcher/helper.so"
 
-/*
- * Where java.home has to be pointed before the first module-image lookup, and
- * why the module image has two names.
+/* [A]
+ * java.home 必须在第一次 module-image 查找之前被指向哪里，以及为什么 module image 有两个
+ * 名字。
  *
- * The file is really named jimg.so, because hvigor only carries files whose name
- * ends in ".so" -- see patch_libjvm.py. That rename is enough for the VM, which
- * was told the new name when the string was rewritten inside libjvm. It is NOT
- * enough for java.base, which builds the path itself:
+ * 这个文件其实叫 jimg.so，因为 hvigor 只搬运文件名以 ".so" 结尾的文件 —— 见 patch_libjvm.py。
+ * 对 VM 而言这个改名就够了，因为在重写 libjvm 里那个字符串时已经告诉了它新名字。但对 java.base
+ * 来说【不够】，因为它是自己拼路径的：
  *
  *     private static final Path BOOT_MODULES_JIMAGE =
  *             Paths.get(System.getProperty("java.home"), "lib", "modules");
  *
- * That is a static final read ONCE, when jdk.internal.jimage.ImageReaderFactory
- * is initialised -- and it is initialised lazily, on the first resource lookup
- * through the boot loader, which for this program is inside the game's main().
- * So there is a wide window in which java.home can still be changed, and the
- * override below is applied at the earliest possible moment after the VM exists.
+ * 那是一个 static final，只在 jdk.internal.jimage.ImageReaderFactory 被初始化时读【一次】——
+ * 而它是惰性初始化的，发生在经由 boot loader 的第一次资源查找时，对本程序而言就是在游戏的
+ * main() 里面。所以有一个很宽的窗口，java.home 仍然可以被改，而下面这个覆盖就是在一个可能的
+ * 最早时刻、在 VM 存在之后立刻施加的。
  *
- * java.home cannot simply be passed as -Djava.home: HotSpot derives it from the
- * location of libjvm.so and overwrites whatever was passed (measured). So it is
- * rewritten from Java instead, after the VM is up but before anything reads it.
+ * java.home 不能简单地作为 -Djava.home 传入：HotSpot 从 libjvm.so 的位置推导它，并覆盖掉传入
+ * 的任何值（实测）。所以它改为从 Java 侧重写，在 VM 起来之后、但在任何东西读它之前。
  *
- * The directory it is pointed at has to contain a real file named "modules",
- * which means materialising the 140 MB image into the sandbox on first launch.
+ * 它被指向的那个目录，必须包含一个名为 "modules" 的真实文件，这意味着首次启动时要把这个
+ * 140 MB 的镜像物化进沙箱。
  *
- * A SYMLINK would have been the obvious way to avoid that copy, and it was tried
- * first: symlink("/data/.../jdk21/lib/jimg.so", ".../jdk/lib/modules") fails with
- * EACCES. The sandbox does not permit creating symlinks at all. A hard link is
- * not an option either -- the image lives on a read-only mount, so it cannot be
- * linked into a writable one.
+ * 用【符号链接】本该是避开这次拷贝的显而易见之法，而且也是最先尝试的：
+ * symlink("/data/.../jdk21/lib/jimg.so", ".../jdk/lib/modules") 以 EACCES 失败。沙箱根本
+ * 不允许创建符号链接。硬链接也不行 —— 镜像位于只读挂载上，无法链接进一个可写挂载。
  *
- * So the copy is the only route, and it is done once: an existing file of the
- * right size is accepted as-is. It is written under a temporary name and renamed
- * into place, because a copy interrupted halfway would otherwise leave a file
- * that passes an existence check and fails inside the JVM instead.
+ * 所以拷贝是唯一的路，而且只做一次：已存在的、尺寸正确的文件被原样接受。它先以一个临时名字
+ * 写入、再改名就位，因为一次中途被打断的拷贝否则会留下一个能通过存在性检查、却在 JVM 内部
+ * 失败的文件。
  */
 #define SANDBOX_JDK     DEST_ROOT "/jdk"
 #define SANDBOX_MODULES SANDBOX_JDK "/lib/modules"
@@ -229,71 +193,75 @@
 #define MODULE_IMAGE    BUNDLE_LIBS "/jdk21/lib/jimg.so"
 #define TZDB_IMAGE      BUNDLE_LIBS "/jdk21/lib/tzdb.so"
 
-/*
- * The rest of what <java.home> has to contain, shipped as a tree that mirrors
- * it. Built by scripts/prep_jdkconf.py, which explains why.
+/* [A]
+ * <java.home> 还必须包含的其余东西，以一棵镜像它的目录树形式分发。由
+ * scripts/prep_jdkconf.py 构建，那里解释了原因。
  *
- * Short version: the JDK reads files relative to java.home, not only the module
- * image. conf/security/java.security is read by Security's static initialiser,
- * and every defineClass() needs a ProtectionDomain, which needs Security -- so
- * with that one file absent, no class can be loaded at runtime by any
- * mechanism. Mod loading was simply the first feature to need one.
+ * 简而言之：JDK 会读取相对于 java.home 的文件，不只是 module image。
+ * conf/security/java.security 由 Security 的静态初始化器读取，而每一次 defineClass() 都需要
+ * 一个 ProtectionDomain，后者又需要 Security —— 所以少了那一个文件，运行时任何机制都无法加载
+ * 任何类。模组加载只不过是最先需要它的那个功能。
  *
- * It is a whole tree rather than a name because the previous name list was
- * exactly right until it was not, twice: this and lib/tzdb.dat.
+ * 之所以是一整棵树而不是一份文件名清单，是因为先前那份清单在对的时候完全正确，直到它不对为止 ——
+ * 有过两次：这一次，以及 lib/tzdb.dat。
  */
 #define JDK_HOME_TREE   BUNDLE_LIBS "/jdkhome"
 
-/* writable places, still needed for tmpdir and the captured stdio */
+/* [B] 可写位置，tmpdir 和捕获的 stdio 仍然需要 */
 #define DEST_ROOT   "/data/storage/el2/base/files"
 #define TMP_DIR     "/data/storage/el2/base/temp"
 
-/*
- * Where this launcher tells ArkTS "the game has finished, close the ability".
+/* [A]
+ * 这个启动器在这里告诉 ArkTS「游戏结束了，关掉 ability」。
  *
- * The two sides do not agree on one path constant: native writes under
- * DEST_ROOT (/data/storage/el2/base/files), while ArkTS's context.filesDir is
- * the module-scoped /data/storage/el2/base/haps/entry/files. The launcher
- * already reads jvm.options from BOTH locations for the same reason, so the
- * marker is written to both and ArkTS checks both. Two one-byte files once, at
- * shutdown, is cheaper than being wrong about which directory is shared.
+ * 两边对一个路径常量并不一致：native 写在 DEST_ROOT（/data/storage/el2/base/files）下，
+ * 而 ArkTS 的 context.filesDir 是模块作用域的 /data/storage/el2/base/haps/entry/files。
+ * 出于同样的原因，启动器本来就会从【两个】位置读 jvm.options，所以这个标记被写到两处，ArkTS
+ * 也检查两处。关机时一次性写两个一字节文件，总好过搞错哪个目录才是共享的。
  *
- * WHY THIS EXISTS AT ALL
- *   Killing the process outright is what makes the system file the exit as
- *   "Cpp Crash": from the framework's point of view a native process died while
- *   its ability was still running. Terminating the ability first and letting the
- *   framework take the process down is the only way to end normally. Native has
- *   no API for that -- the ability object is an ArkTS object -- so ArkTS has to
- *   do it, and this file is how it finds out.
+ * 为什么它非存在不可
+ *   直接杀进程，正是让系统把这次退出归档成 "Cpp Crash" 的原因：从框架的视角看，一个 native
+ *   进程在它的 ability 仍在运行时死掉了。先终止 ability，让框架把进程带下去，才是正常结束的
+ *   唯一办法。native 没有这个 API —— ability 对象是个 ArkTS 对象 —— 所以只能由 ArkTS 来做，
+ *   而这个文件就是它得知的方式。
  */
 #define EXIT_MARKER_SANDBOX DEST_ROOT "/native_exit"
 #define EXIT_MARKER_MODULE  "/data/storage/el2/base/haps/entry/files/native_exit"
 
-/*
- * Probe whether this app can actually READ the directories the platform calls
- * user-visible -- the ones a player could drop a save file into.
+/* [A]
+ * 在 JVM 被创建之前写下，在它存在之后删除。
  *
- * The paths are not guessed here: ArkTS asks the platform
- * (environment.getUserDownloadDir / getUserDocumentDir) and writes them to
- * USER_DIRS_FILE, because only ArkTS can ask. But only native can test
- * readability with the same libc the game uses, and "the API returned a path"
- * says nothing about whether an open() on it succeeds. Both halves are needed.
+ * 为什么：当 JNI_CreateJavaVM 拿不到它需要的东西时，进程会当场停死，哪儿都不会写下任何东西 ——
+ * 没有日志行，没有 faultlog，没有返回码。2026-09-22 在一个商店签名的包上实测到，而这是唯一一种
+ * 完全不留证据的失败。一个能存活到【下一次】启动的标记，是页面得知它发生过的唯一办法，因为页面
+ * 永远只能读到上一次运行留下的东西。
  *
- * This matters because the game's "import save" browser roots itself at Arc's
- * external storage path, which SdlFiles derives from user.home -- and this
- * launcher points user.home at its own sandbox, so the browser opens inside the
- * app where the player can put nothing. Whether that is fixable at all depends
- * on the answer here.
+ * 它【不是】什么：对【本次】启动的判决。没有东西读它来决定是否启动；页面显示一条提示，由玩家来
+ * 选择。一次性失败留下的残留，绝不能拦住一次本可以成功的运行。
+ */
+#define JVM_INCOMPLETE_MARKER DEST_ROOT "/jvm_incomplete"
+
+/* [A]
+ * 探测这个应用到底能不能【读】平台称为用户可见的那些目录 —— 也就是玩家可以往里丢存档文件的
+ * 那些。
+ *
+ * 这里的路径不是猜的：ArkTS 去问平台（environment.getUserDownloadDir /
+ * getUserDocumentDir）并把它们写到 USER_DIRS_FILE，因为只有 ArkTS 能问。但只有 native 能用
+ * 与游戏相同的 libc 去测试可读性，而「这个 API 返回了一个路径」丝毫不能说明对它 open() 能否
+ * 成功。两半都需要。
+ *
+ * 这很重要，因为游戏的「导入存档」浏览器以 Arc 的外部存储路径为根，而 SdlFiles 是从 user.home
+ * 推导出它的 —— 本启动器却把 user.home 指向自己的沙箱，于是浏览器打开在应用内部，玩家在那儿
+ * 什么都放不了。这到底能不能修，取决于此处的答案。
  */
 #define USER_DIRS_FILE "/data/storage/el2/base/haps/entry/files/user_dirs.txt"
 
-/*
- * Look up one "key=value" line in the file ArkTS wrote.
+/* [A]
+ * 在 ArkTS 写下的文件里查一行 "key=value"。
  *
- * Returns the number of bytes copied (0 when the key is absent or the file is
- * unreadable), so a caller can leave a system property unset rather than pass
- * an empty value -- an empty -Darc.sdl.chooserPath would make the game's file
- * browser open at the filesystem root, which is worse than not trying.
+ * 返回拷贝的字节数（键不存在或文件不可读时为 0），这样调用方可以把一个系统属性留作未设置，
+ * 而不是传一个空值 —— 一个空的 -Darc.sdl.chooserPath 会让游戏的文件浏览器打开在文件系统根，
+ * 那比干脆不试还糟。
  */
 static int read_user_dir(const char *key, char *out, size_t outlen)
 {
@@ -311,17 +279,14 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
         }
         const char *v = line + klen + 1;
         size_t n = strlen(v);
-        /* 10 and 13 are LF and CR. Written as numbers rather than as character
-         * escapes because this file has already been through one tool that ate
-         * backslashes and left a literal newline inside a char literal. */
+        /* [A] 10 和 13 是 LF 和 CR。写成数字而不是字符转义，是因为这个文件已经过一次工具的
+         * 处理，那个工具吃掉了反斜杠，在字符字面量里留下了一个真正的换行。 */
         while (n > 0 && (v[n - 1] == 10 || v[n - 1] == 13)) {
             n--;
         }
-        /* "<threw>" is what ArkTS writes when the platform call failed; it is
-         * not a path, so treat it as absent rather than passing it on. An empty
-         * value is treated the same way: -Darc.sdl.chooserPath= (empty) would
-         * make the game's file browser open at the filesystem root, which is
-         * worse than leaving the property off entirely. */
+        /* [A] "<threw>" 是平台调用失败时 ArkTS 写的东西；它不是路径，所以当作不存在处理，
+         * 而不是把它传下去。空值同样对待：-Darc.sdl.chooserPath= （空）会让游戏的文件浏览器
+         * 打开在文件系统根，那比彻底不设这个属性还糟。 */
         if (n == 0 || n >= outlen) {
             break;
         }
@@ -337,26 +302,23 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
     return found;
 }
 
-/*
- * Which control scheme the player picked, persisted across launches.
+/* [A]
+ * 玩家选了哪种操作方案，跨启动持久化。
  *
- * Mindustry decides its ENTIRE input layer and UI from one bit:
+ * Mindustry 用【一个 bit】决定它整个输入层和 UI：
  *
  *     Vars.mobile = Core.app.isMobile() || Vars.testMobile;
  *
- * and its own in-game switch does not touch that bit -- it only calls
- * control.setInput(...), so the input handler changes while the UI stays mobile.
- * Measured on the tablet by the user, and confirmed in the bytecode: Vars.mobile
- * has exactly one writer, that line in Vars.init().
+ * 而它游戏内的开关并不碰这个 bit —— 它只调用 control.setInput(...)，于是输入处理器变了、
+ * UI 却仍旧是移动端。用户在平板上实测到，并在字节码里得到确认：Vars.mobile 恰好只有一个写入者，
+ * 就是 Vars.init() 里的那一行。
  *
- * So to give the player a real choice, the bit has to be set before Vars.init()
- * runs -- before the JVM starts -- which means the answer must already be on disk
- * by then. ArkTS writes this file when the player taps the button; nothing native
- * ever writes it, so a plain read at startup is all that is needed.
+ * 所以要让玩家有真正的选择，必须在 Vars.init() 运行【之前】就设好这个 bit —— 也就是在 JVM
+ * 启动之前 —— 这意味着到那时答案必须已经在磁盘上了。玩家点按钮时由 ArkTS 写这个文件；native
+ * 从不写它，所以启动时一次单纯读取就够了。
  *
- * An absent file means mobile: that is what this launcher hardcoded before the
- * setting existed, so an install that never touches the button behaves exactly as
- * it always did.
+ * 文件不存在意味着移动端：这是本启动器在该设置存在之前硬编码的行为，所以一个从不碰那个按钮的
+ * 安装，行为与它一向完全一致。
  */
 #define CONTROL_MODE_FILE "/data/storage/el2/base/haps/entry/files/control_mode.txt"
 
@@ -364,15 +326,14 @@ static int read_control_mode_mobile(void)
 {
     FILE *f = fopen(CONTROL_MODE_FILE, "r");
     if (!f) {
-        return 1;                       /* nothing recorded: stay mobile */
+        return 1;                       /* [B] 没记录：保持移动端 */
     }
     int mobile = 1;
     char line[32];
     if (fgets(line, (int) sizeof(line), f)) {
-        /* "desktop" is the only value that turns it off. Anything else -- the
-         * word "mobile", an empty file, a truncated write -- leaves the default
-         * alone, so a corrupt or half-written file cannot silently swap the
-         * player's controls out from under them. */
+        /* [A] "desktop" 是唯一能关掉它的值。其它任何东西 —— "mobile" 这个词、空文件、
+         * 截断的写入 —— 都让默认值保持不变，这样一个损坏或只写了一半的文件，不会在玩家不知情的
+         * 情况下悄悄换掉他的操作方式。 */
         if (strncmp(line, "desktop", 7) == 0) {
             mobile = 0;
         }
@@ -410,30 +371,21 @@ static void probe_user_dirs(void)
         label[ll] = '\0';
         const char *path = eq + 1;
 
-        /* opendir is the question that matters: the game has to LIST the
-         * directory before it can pick a file out of it.
+        /* [A] opendir 才是关键问题：游戏必须先【列出】目录，才能从里面挑出一个文件。
          *
-         * DIRECTORY ENTRIES ARE NOT FILES, and counting them as such is
-         * misleading -- the first version of this tallied "the last dot
-         * component" of every name, so a Download folder containing
-         * com.huawei.browser/ and com.huawei.music/ reported extensions
-         * "browser" and "music". They are not extensions; they are package
-         * names. The counts are now split so the output says what it measured.
+         * 目录项不是文件，把它们当成文件来计数会误导 —— 这个的第一版统计了每个名字「最后一个点
+         * 之后的部分」，于是一个含有 com.huawei.browser/ 和 com.huawei.music/ 的 Download 文件夹
+         * 报出了扩展名 "browser" 和 "music"。它们不是扩展名，是包名。现在计数被拆开，
+         * 输出如实说明它测量了什么。
          *
-         * stat() rather than dirent's d_type: d_type is allowed to be
-         * DT_UNKNOWN depending on the filesystem, and silently misclassifying
-         * everything as "not a directory" would reproduce the same wrong answer
-         * this is fixing.
+         * 用 stat() 而不是 dirent 的 d_type：d_type 依文件系统不同允许是 DT_UNKNOWN，而悄悄把
+         * 一切都错分成「不是目录」，会复现出这正是要修的那个错误答案。
          *
-         * The extension tally exists because "the browser opened here and showed
-         * nothing" has two different causes: the app cannot see the directory, or
-         * it can see it and the file does not match the filter the game asks for.
-         * There are TWO import paths with DIFFERENT filters -- measured from the
-         * jar's bytecode, LoadDialog passes {"msav"} for a single save while
-         * SettingsMenuDialog passes {"zip"} for a whole data export -- so a file
-         * can be perfectly readable and still absent from the dialog the player
-         * happened to open. Counting extensions here answers that without
-         * another build. */
+         * 扩展名统计之所以存在，是因为「浏览器开到这儿却什么都没显示」有两个不同的原因：应用
+         * 看不见这个目录，或者它看得见、但文件不匹配游戏要求的过滤条件。有【两条】导入路径，
+         * 各自的过滤条件【不同】—— 从 jar 的字节码里实测到，LoadDialog 传 {"msav"} 取单个存档，
+         * 而 SettingsMenuDialog 传 {"zip"} 取整份数据导出 —— 所以一个文件可以完全可读，却仍然
+         * 不出现在玩家恰好打开的那个对话框里。在这里统计扩展名，无需再构建一次就能回答这点。 */
         DIR *d = opendir(path);
         if (!d) {
             SDL_Log("   %-9s NOT READABLE  errno=%d (%s)  %s",
@@ -461,14 +413,14 @@ static void probe_user_dirs(void)
                 continue;
             }
             if (S_ISDIR(st.st_mode)) {
-                dirs++;   /* a package directory, .zip file, whatever -- not an extension */
+                dirs++;   /* [B] 一个包目录、.zip 文件，随便什么 —— 都不是扩展名 */
                 continue;
             }
             files++;
 
             const char *dot = strrchr(e->d_name, '.');
             if (!dot || dot == e->d_name) {
-                continue;  /* no extension, or a dotfile like .nomedia */
+                continue;  /* [B] 没有扩展名，或者是像 .nomedia 这样的点文件 */
             }
 
             if (strcmp(dot, ".msav") == 0 || strcmp(dot, ".msch") == 0) {
@@ -481,8 +433,8 @@ static void probe_user_dirs(void)
                         label, e->d_name);
             }
 
-            /* Distinct extensions only. Matched on token boundaries rather than
-             * with strstr, so ".so" cannot be "found" inside ".something". */
+            /* [A] 只记不重复的扩展名。按 token 边界匹配而不是用 strstr，这样 ".so" 不会在
+             * ".something" 里被「找到」。 */
             int seen = 0;
             int off = 0;
             while (!seen && off < ext_off) {
@@ -510,86 +462,75 @@ static void probe_user_dirs(void)
     SDL_Log(" ---- end user-directory probe ----");
 }
 
-/*
- * Native code may only be executed from the HAP's read-only area, never from
- * the app's writable sandbox. Measured on device:
+/* [A]
+ * Native 代码只能从 HAP 的只读区执行，绝不能从应用的可写沙箱执行。设备上实测：
  *   dlopen("/data/storage/el1/bundle/libs/arm64/libSDL3.so")            -> OK
  *   dlopen("/data/storage/el2/base/files/.../libcxxabi_shim.so")        -> FAIL
- *   ...and chmod 0755 on that file did NOT help.
- * That is the usual W^X rule: el2 (writable) is not executable.
- * So the ENTIRE JDK ships as prebuilt libraries under entry/libs/arm64-v8a/ and
- * lands in the executable area -- including the module image, which can only be
- * shipped because it was renamed to "jimg.so" (see patch_libjvm.py). Nothing is
- * written to the sandbox at startup.
+ *   ……而且对该文件 chmod 0755 也【没有】帮助。
+ * 这就是通常的 W^X 规则：el2（可写）不可执行。
+ * 所以【整个】JDK 都作为预构建库放在 entry/libs/arm64-v8a/ 下，并落进可执行区 —— 包括
+ * module image，它能被分发只是因为被改名成了 "jimg.so"（见 patch_libjvm.py）。启动时什么都不
+ * 写进沙箱。
  */
 
-/*
- * Where libjvm.so must live, and why:
- *   HotSpot derives java.home from libjvm.so's own location --
- *   it strips three path components (see os::init_system_properties_values()
- *   in os_linux.cpp) and then requires "<java.home>/lib/modules" to exist:
+/* [A]
+ * libjvm.so 必须住在哪，以及为什么：
+ *   HotSpot 从 libjvm.so 自身的位置推导 java.home ——
+ *   它剥掉三层路径分量（见 os_linux.cpp 里的 os::init_system_properties_values()），
+ *   然后要求 "<java.home>/lib/modules" 存在：
  *
- *       Arguments::set_java_home(buf);          // unconditional, ignores -Djava.home
+ *       Arguments::set_java_home(buf);          // 无条件，忽略 -Djava.home
  *       if (!set_boot_path('/', ':'))
  *           vm_exit_during_initialization("Failed setting boot class path.");
  *
- *   With libjvm.so flattened into the ABI dir the derivation lands on .../bundle,
- *   which has no <module image> -> "Failed setting boot class path.".
+ *   如果 libjvm.so 被拍平到 ABI 目录里，推导结果会落到 .../bundle 上，那里没有
+ *   <module image> -> "Failed setting boot class path."。
  *
- *   So the real JVM stays nested at <JDK_HOME>/lib/server/libjvm_real.so, which
- *   makes java.home come out as <JDK_HOME> -- exactly where the module image and
- *   conf/ live.
+ *   所以真正的 JVM 保持嵌套在 <JDK_HOME>/lib/server/libjvm_real.so，这让 java.home 得到
+ *   <JDK_HOME> —— 正是 module image 和 conf/ 所在的地方。
  *
- *   Verified empirically, not assumed: an earlier attempt did dlopen the JVM from
- *   the writable sandbox (AMCL is known to run its JVM from /data/app/el2/...) and
- *   it did NOT work for us -- the copy that succeeded was the one inside the HAP.
- *   The bundle area is the only path this launcher relies on.
+ *   这是经验验证过的，不是假设：早先的尝试确实从可写沙箱里 dlopen 了 JVM（已知 AMCL 就是
+ *   从 /data/app/el2/... 跑它的 JVM 的），而对我们【没有】成功 —— 成功的那份副本是 HAP 里的
+ *   那份。bundle 区是本启动器唯一依赖的路径。
  */
 
 static int g_files = 0;
 static long long g_bytes = 0;
 
-/*
+/* [A]
  * ---------------------------------------------------------------------------
- * WHERE ARE WE? -- discovered at runtime, not assumed.
+ * 我们在哪？—— 运行时发现，而非假设。
  *
- * The ABI directory name is NOT the same string in the two namespaces:
- *     inside the HAP            libs/arm64-v8a/...
- *     on the device             /data/storage/el1/bundle/libs/arm64/...
- * and getting it wrong is silent: every dlopen just fails with "no such file".
+ * ABI 目录名在两个命名空间里【不是】同一个字符串：
+ *     在 HAP 内                 libs/arm64-v8a/...
+ *     在设备上                  /data/storage/el1/bundle/libs/arm64/...
+ * 搞错它是无声的：每次 dlopen 都只是以 "no such file" 失败。
  *
- * We could hardcode it, but one of the strings is NOT ours to choose: the anchor
- * library's DT_NEEDED carries an absolute device path baked in at LINK time by
- * prep_vendor.py. If that string disagrees with reality, nothing else can
- * compensate. So instead of guessing, ask the loader for the path of the library
- * we are already running inside -- dladdr() on one of our own functions returns
- * libmain.so's real path, and its directory IS the lib dir.
+ * 我们本可以硬编码它，但其中有一个字符串【不是】我们能选的：anchor 库的 DT_NEEDED 里带着一条
+ * 由 prep_vendor.py 在【链接时】烙进去的设备绝对路径。如果那个字符串与现实不符，别的什么都无法
+ * 补偿。所以与其猜，不如向 loader 询问我们此刻正运行在其中的这个库的路径 —— 对我们自己的某个
+ * 函数做 dladdr() 会返回 libmain.so 的真实路径，而它的目录【就是】lib 目录。
  *
- * That makes the answer authoritative and self-correcting, and it gives the
- * build-time string something to be checked against.
+ * 这让答案权威且能自我纠正，并且给构建时的那个字符串一个可供对照的东西。
  * ---------------------------------------------------------------------------
  */
 #define ABI_DIR_GUESS "/data/storage/el1/bundle/libs/arm64"
 
-static char g_root[1024];       /* <bundle>/libs/<abi>            */
+static char g_root[1024];       /* [B] <bundle>/libs/<abi>            */
 static char g_jdkhome[1200];    /* <root>/jdk21                   */
 static char g_jdklib[1400];     /* <jdkhome>/lib                  */
 static char g_jvmreal[1500];    /* <jdklib>/server/libjvm_real.so */
 static char g_anchor[1400];     /* <root>/libjvm.so               */
 
-/* Defined further down, but diagnose_loading() wants them and comes first. */
-/*
- * The result of probe_exec_mem(): 42 when anonymous RWX memory works, -1 when
- * the mmap is refused, something else when the mapping worked but the code in it
- * did not run.
+/* [B] 定义在下面更远处，但 diagnose_loading() 需要它们而它排在前头。 */
+/* [A]
+ * probe_exec_mem() 的结果：匿名 RWX 内存可用时为 42，mmap 被拒时为 -1，映射成功但里面的代码
+ * 没跑起来时是别的值。
  *
- * Initialised to a value that is NOT 42 on purpose. The option assembly treats
- * "not 42" as "the JVM cannot get executable memory" and forces -Xint, so if the
- * probe ever failed to run, the safe answer is the one that is taken. That
- * cannot happen today -- diagnose_loading() calls the probe and runs well before
- * the options are built -- but the cost of being wrong in the other direction is
- * an app that installs and then hangs with no explanation, which is the exact
- * failure this whole arrangement exists to prevent.
+ * 刻意初始化成一个【不是 42】的值。选项组装会把「不是 42」当作「JVM 拿不到可执行内存」并强制
+ * -Xint，所以万一探测没跑成，被采纳的就是那个安全的答案。今天这不会发生 —— diagnose_loading()
+ * 会调用该探测，且远在选项被组装之前就运行 —— 但在另一个方向上出错的代价，是一个装得上、
+ * 然后毫无解释地卡死的应用，而这正是这一整套安排存在的意义所在。
  */
 static long g_exec_probe_result = -2;
 static long probe_exec_mem(void);
@@ -601,7 +542,7 @@ static void joinp(char *dst, size_t cap, const char *a, const char *b)
     SDL_snprintf(dst, cap, "%s%s", a, b);
 }
 
-/* returns 1 if dladdr gave us a usable directory */
+/* [B] 如果 dladdr 给了我们一个可用的目录就返回 1 */
 static int discover_paths(void)
 {
     Dl_info dl;
@@ -618,7 +559,7 @@ static int discover_paths(void)
         SDL_Log(" !! dladdr failed -- falling back to the compile-time guess");
     }
 
-    /* if discovery failed, fall back to the guess so we still get diagnostics */
+    /* [B] 如果发现失败，就回退到那个猜测，好让我们仍然能拿到诊断信息 */
     int discovered = (g_root[0] != '\0');
     if (!discovered) SDL_strlcpy(g_root, ABI_DIR_GUESS, sizeof(g_root));
 
@@ -627,8 +568,8 @@ static int discover_paths(void)
     joinp(g_jvmreal, sizeof(g_jvmreal), g_jdklib, "/server/libjvm_real.so");
     joinp(g_anchor,  sizeof(g_anchor),  g_root, "/libjvm.so");
 
-    /* did the compile-time choice agree? this is the one thing we cannot fix at
-     * runtime, so say so plainly rather than failing later with a vague error */
+    /* [A] 编译时的选择对得上吗？这是我们在运行时唯一无法修复的一件事，所以把它明明白白说出来，
+     * 而不是稍后以一条含糊的错误失败 */
     struct stat st;
     int guess_ok = (stat(ABI_DIR_GUESS "/libjvm.so", &st) == 0);
     SDL_Log(" compile-time guess               : %s  [%s]",
@@ -641,12 +582,10 @@ static int discover_paths(void)
     return discovered;
 }
 
-/*
- * The unpacking machinery is gone: the JDK now runs straight out of the HAP's
- * lib area (see JDK_HOME above), so there is nothing to extract and no marker
- * to keep. That also removes the "165 MB written on first launch" cost and the
- * whole class of bugs that came with it (including one where a failed symlink
- * silently deleted every library).
+/* [A]
+ * 解包机制没有了：JDK 现在直接从 HAP 的 lib 区运行（见上面的 JDK_HOME），所以没什么要解压的，
+ * 也没有标记要留。这也移除了「首次启动写入 165 MB」的开销以及随之而来的整整一类 bug（其中包括
+ * 一个符号链接失败却悄悄删光所有库的）。
  */
 
 static void mkdirs(const char *path)
@@ -661,15 +600,14 @@ static void mkdirs(const char *path)
     mkdir(tmp, 0755);
 }
 
-/* ------------------------------------------------------------- JVM startup */
+/* [B] ------------------------------------------------------------- JVM 启动 */
 
-/* ---------------------------------------------------------- stdio + crashes */
+/* [B] ---------------------------------------------------------- stdio + 崩溃 */
 
-/*
- * Redirect stdout/stderr into the writable sandbox.
- *   The JVM reports startup failures there and we cannot see them over hdc, so
- *   without this a failure is just "the process died". (AMCL does the same
- *   thing with its "[Phase 4] REDIRECT_IO".)
+/* [A]
+ * 把 stdout/stderr 重定向进可写沙箱。
+ *   JVM 在那里报告启动失败，而我们无法通过 hdc 看到它们，所以没有这个，一次失败就只是
+ *   「进程死了」。（AMCL 用它的 "[Phase 4] REDIRECT_IO" 做同样的事。）
  */
 static void redirect_io(void)
 {
@@ -681,8 +619,8 @@ static void redirect_io(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 }
 
-/* Report a fatal signal and, via dladdr, which library the address belongs to. */
-/* the current thread's name, for crash reports -- see on_fatal_signal() */
+/* [B] 报告一个致命信号，并通过 dladdr 报告该地址属于哪个库。 */
+/* [B] 当前线程的名字，用于崩溃报告 —— 见 on_fatal_signal() */
 static const char *thread_name(void)
 {
     static char tn[64];
@@ -706,43 +644,36 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
     unsigned long pc = (unsigned long)(uintptr_t)(info ? info->si_addr : NULL);
     report_mapping(pc, map, sizeof(map));
 
-    /*
-     * For SIGILL, dump the bytes at the faulting instruction.
+    /* [A]
+     * 对 SIGILL，把出错指令处的字节 dump 出来。
      *
-     * This separates the two very different reasons code can trap here:
-     *   - the bytes are NOT a valid aarch64 instruction  -> HotSpot generated
-     *     code for CPU features this device does not have;
-     *   - the bytes ARE a valid instruction               -> the write reached
-     *     memory but not the instruction cache, i.e. a coherence problem.
-     * The two have nothing in common as fixes, and the addresses alone cannot
-     * tell them apart.
+     * 这能区分代码在这里陷入陷阱的两种截然不同的原因：
+     *   - 这些字节【不是】合法的 aarch64 指令 -> HotSpot 为本设备没有的 CPU 特性生成了代码；
+     *   - 这些字节【是】合法指令                -> 写入到达了内存但没有到达指令缓存，也就是
+     *     一致性问题。
+     * 两者作为修复毫无共同之处，而单看地址无法把它们区分开。
      *
-     * Only read when the containing mapping is readable, so a bad guess cannot
-     * turn one crash into two.
+     * 只在所属映射可读时才读取，这样一个糟糕的猜测不会把一次崩溃变成两次。
      */
-    /*
-     * Dump the CPU registers at fault time.
+    /* [A]
+     * dump 出错时刻的 CPU 寄存器。
      *
-     * This is the measurement the whole investigation was missing. The faulting
-     * address alone cannot distinguish "code is wrong" from "control flow
-     * arrived somewhere it should not have", and those have nothing in common
-     * as fixes. The registers say which: on aarch64 HotSpot's interpreter
-     * dispatches with
+     * 这是整个调查一直缺失的那次测量。单看出错地址，无法区分「代码是错的」和「控制流到达了
+     * 它不该到的地方」，而这两者作为修复毫无共同之处。寄存器能说明是哪种：在 aarch64 上，
+     * HotSpot 的解释器这样分发
      *     adrp x21, <dispatch table page> ; add x21, x21, #off
      *     ldr  x9, [x21, w9, uxtw #3]     ; br x9
-     * so x21 holds the dispatch table the code THINKS it has, and x9 (or
-     * whatever register br used) holds where it actually went.
+     * 所以 x21 持有代码【以为】自己有的分发表，而 x9（或者 br 实际用的那个寄存器）持有它实际
+     * 去的地方。
      */
-    /*
-     * Name the module the FAULTING INSTRUCTION is in, and the thread it ran on.
+    /* [A]
+     * 说出【出错指令】所在的那个模块，以及它跑在哪个线程上。
      *
-     * si_addr says what was touched, not what touched it, and for a fault at a
-     * small offset it is usually something like 0x20 that names nothing at all --
-     * dladdr reports "in ?". The program counter is the opposite: it is always a
-     * real address in a real mapping, so it answers "which library, or is this
-     * JIT-generated code in the code cache", which is the first thing worth
-     * knowing. The thread name separates a fault on the game thread from one on
-     * SDL's UI-event path, and those point at completely different code.
+     * si_addr 说的是什么被碰了，而不是什么碰的它，对于一个位于小偏移处的错误，它通常就是
+     * 0x20 之类、什么都指不出来的值 —— dladdr 会报 "in ?"。程序计数器正好相反：它永远是一个
+     * 真实映射里的真实地址，所以它能回答「是哪个库，还是 code cache 里 JIT 生成的代码」，
+     * 这才是第一个值得知道的事。线程名把游戏线程上的错误和 SDL UI 事件路径上的错误区分开，
+     * 而这两者指向完全不同的代码。
      */
     char pcinfo[600];
     pcinfo[0] = '\0';
@@ -783,31 +714,28 @@ static void on_fatal_signal(int sig, siginfo_t *info, void *uctx)
     char insn[400];
     insn[0] = '\0';
     if (sig == SIGILL && pc && strstr(map, " r") && !strstr(map, "(no ")) {
-        /*
-         * Dump the surrounding CODE CACHE as raw bytes, not as text.
+        /* [A]
+         * 把周围的 CODE CACHE 作为原始字节 dump，而不是文本。
          *
-         * The question this has to answer is whether HotSpot's model of the code
-         * cache matches what is actually in memory. -XX:+PrintStubCode prints
-         * every stub HotSpot believes it generated, with its address and bytes;
-         * if the raw memory disagrees, something is writing to the code cache
-         * that should not be, and no amount of JVM-flag tuning will fix that.
+         * 它要回答的问题是：HotSpot 对 code cache 的模型，是否与内存里实际的东西一致。
+         * -XX:+PrintStubCode 会打印 HotSpot 相信自己生成的每一个 stub，连同它的地址和字节；
+         * 如果原始内存与之不符，那就是有什么正在往 code cache 里写、而本不该写，这不是调多少
+         * JVM flag 能修好的。
          *
-         * A 160-byte hex window cannot answer it, and text makes the comparison
-         * lossy. So write binary and read it with the same disassembler offline.
+         * 一个 160 字节的十六进制窗口回答不了这个问题，而文本又让对比变得有损。所以写二进制，
+         * 离线用同一个反汇编器去读。
          */
-        /*
-         * Dump the WHOLE mapping, starting at its base.
+        /* [A]
+         * 从基址开始 dump 【整个】映射。
          *
-         * -XX:+PrintStubCode prints every stub with its address and bytes, and
-         * the code-cache base is stable across runs with the same options, so
-         * the printed addresses can be compared directly against these bytes.
-         * That comparison is what separates the two explanations that matter:
-         *   - memory matches the print  -> HotSpot generated exactly this and the
-         *     anomaly is in how it is reached, not in what is stored;
-         *   - memory differs            -> something wrote into the code cache
-         *     that should not have, and no JVM flag will fix that.
-         * A window around the PC cannot answer it, because the stubs worth
-         * checking are elsewhere in the mapping.
+         * -XX:+PrintStubCode 会打印每一个 stub 及其地址和字节，而在相同选项下 code-cache 的
+         * 基址跨运行是稳定的，所以打印出的地址可以直接与这些字节对比。正是这个对比，才能区分开
+         * 两种要紧的解释：
+         *   - 内存与打印一致  -> HotSpot 生成的正是这个，异常出在「如何到达它」上，而不是
+         *     「存了什么」上；
+         *   - 内存与打印不同  -> 有什么往 code cache 里写了、而本不该写，没有任何 JVM flag 能
+         *     修好它。
+         * PC 周围的一个窗口回答不了它，因为值得检查的那些 stub 在这个映射的别处。
          */
         unsigned long lo = 0, hi = 0;
         if (sscanf(map, "%lx-%lx", &lo, &hi) == 2) {
@@ -862,18 +790,16 @@ static void install_crash_handlers(void)
 
 typedef jint (*CreateJavaVM_t)(JavaVM **pvm, void **penv, void *args);
 
-/*
- * Why we preload:
- *   libjvm.so's DT_NEEDED is [libcxxabi_shim.so, libc.so]. That shim is a
- *   private library of this ad-hoc JDK build and lives in <java.home>/lib,
- *   which is NOT on the dynamic linker's search path. The first dlopen of
- *   libjvm.so therefore failed with musl's unhelpful "No error information".
+/* [C]
+ * 我们为什么要 preload：
+ *   libjvm.so 的 DT_NEEDED 是 [libcxxabi_shim.so, libc.so]。那个 shim 是这个临时拼装 JDK
+ *   构建的私有库，住在 <java.home>/lib 下，而那里【不在】动态链接器的搜索路径上。所以第一次
+ *   dlopen libjvm.so 时，以 musl 那句没用的 "No error information" 失败了。
  *
- *   Fix: dlopen every .so in <java.home>/lib ourselves with RTLD_GLOBAL, so
- *   that when the loader later resolves libjvm.so's DT_NEEDED it finds the
- *   already-loaded library by SONAME. libjvm.so itself goes last and global,
- *   because libjava.so (& friends) declare a NEEDED on it.
- *   This is the same trick mobile Java launchers use.
+ *   修法：我们自己对 <java.home>/lib 下的每个 .so 用 RTLD_GLOBAL 做 dlopen，这样当 loader
+ *   稍后解析 libjvm.so 的 DT_NEEDED 时，能按 SONAME 找到已经加载的库。libjvm.so 自己放在最后
+ *   并且 global，因为 libjava.so（及其同类）声明了对它的 NEEDED。
+ *   这和移动端 Java 启动器用的是同一个招数。
  */
 static int try_dlopen(const char *path, const char *label)
 {
@@ -888,7 +814,7 @@ static int try_dlopen(const char *path, const char *label)
     return 1;
 }
 
-/* is this file an ELF shared object? (the dir also holds the jimage, named *.so) */
+/* [B] 这个文件是 ELF 共享对象吗？（该目录里还放着 jimage，名字也叫 *.so） */
 static bool is_elf(const char *path)
 {
     int fd = open(path, O_RDONLY);
@@ -899,31 +825,26 @@ static bool is_elf(const char *path)
     return n == 4 && m[0] == 0x7f && m[1] == 'E' && m[2] == 'L' && m[3] == 'F';
 }
 
-/*
- * Load order matters. Every other JDK library (libjava, libnet, libnio,
- * libjimage, ...) declares DT_NEEDED on the bare name "libjvm.so", and this
- * directory is not on the loader's search path, so libjvm.so has to be brought
- * in FIRST with its full path and RTLD_GLOBAL. The others then resolve their
- * dependency against the already-loaded library. Doing it the other way round
- * was what produced a wall of "libjvm.so: (needed by ...)" failures.
+/* [A]
+ * 加载顺序很重要。其它每个 JDK 库（libjava、libnet、libnio、libjimage……）都声明了对裸名
+ * "libjvm.so" 的 DT_NEEDED，而这个目录不在 loader 的搜索路径上，所以 libjvm.so 必须【最先】
+ * 用完整路径加 RTLD_GLOBAL 被带进来。其它库随后针对已加载的那个库解析各自的依赖。反过来做，
+ * 就是产生一整堵 "libjvm.so: (needed by ...)" 失败的根源。
  */
-/*
- * NOTE: the preload loop is GONE, and that is a real change of substance.
+/* [A]
+ * 注意：preload 循环【没有了】，这是一次有实质意义的改动。
  *
- * It existed for an older layout in which the real libjvm.so sat in
- * <java.home>/lib/server/ with a DT_NEEDED on the JDK's private C++ shim, which
- * was not on the loader's search path -- so every JDK library had to be dlopen'd
- * by hand, RTLD_GLOBAL, before libjvm.so could be loaded at all.
+ * 它存在过，是为了一个更老的布局：那时真正的 libjvm.so 坐在 <java.home>/lib/server/ 下，带着
+ * 对 JDK 私有 C++ shim 的 DT_NEEDED，而那个 shim 不在 loader 的搜索路径上 —— 所以在 libjvm.so
+ * 能被加载之前，每个 JDK 库都必须手工用 RTLD_GLOBAL 做 dlopen。
  *
- * The current layout already resolves that: libjvm_real.so's only needs are
- * libcxxabi_shim.so and libc.so, and our shim sits on the search path. The
- * remaining JDK libraries are ones the JVM loads itself, by full path, from
- * sun.boot.library.path -- the way it does on every other platform.
+ * 当前布局已经解决了这一点：libjvm_real.so 只有 libcxxabi_shim.so 和 libc.so 这两个依赖，而
+ * 我们的 shim 就在搜索路径上。剩下的那些 JDK 库，是 JVM 自己按完整路径、从 sun.boot.library.path
+ * 加载的 —— 和其它平台上的做法一样。
  *
- * Keeping the loop would not be harmless: it pushes 35 libraries into the global
- * symbol scope AHEAD of the JVM, so any name they share with libjvm.so can be
- * interposed onto hot spot's own calls. The JVM is not written to survive that,
- * and it is a plausible source of a jump into data.
+ * 留着这个循环并非无害：它会把 35 个库推进全局符号作用域，排在 JVM【前面】，于是它们与
+ * libjvm.so 共享的任何名字都可能被插入覆盖到 HotSpot 自己的调用上。JVM 不是照着能扛住这种情况
+ * 写的，而这很可能是「跳进数据里」的一个来源。
  */
 static void load_anchor_only(void)
 {
@@ -933,8 +854,8 @@ static void load_anchor_only(void)
     SDL_Log(" --- end diagnostics ---");
 }
 
-/* option strings: the JVM may write into these, so they must be mutable */
-static char opt_classpath[1024];   /* four entries; three would fit in 512 today */
+/* [A] option 字符串：JVM 可能往这些里写，所以它们必须可修改 */
+static char opt_classpath[1024];   /* [C] 四条；今天 512 够放三条 */
 static char opt_home[512];
 static char opt_tmpdir[512];
 static char opt_libpath[512];
@@ -943,80 +864,68 @@ static char opt_headless[512];
 static char opt_bootlib[512];
 static char opt_errfile[512];
 static char opt_heap[512];
-/* the two flags that decide whether the JVM starts at all -- see start_jvm() */
+/* [A] 决定 JVM 到底能不能启动的两个 flag —— 见 start_jvm() */
 static char opt_unsve[512];
 static char opt_sve[512];
-/*
- * Three platform properties, supplied as VM creation options rather than in the
- * runtime options file because the game's platform detection reads them at
- * class-initialisation time, before anything we could set from Java would take
- * effect.
+/* [A]
+ * 三个平台属性，作为 VM 创建选项提供，而不是放进运行时选项文件，因为游戏的平台检测在类初始化
+ * 时就读它们，早于任何我们能从 Java 侧设置、并且能生效的东西。
  *
- *   os.name      the JVM reports the host OS to Java through this. Every
- *                LWJGL/Arc native lookup in the game is keyed off it, and the
- *                known-good reference configuration on this device reports
- *                "Linux" here -- on the real value the game would look for
- *                HarmonyOS/Android natives that do not exist in this layout.
- *   user.home    where the game keeps saves and settings. Without it the JVM
- *                guesses from /etc/passwd, which does not exist here.
- *   user.dir     the working directory for relative paths at startup.
+ *   os.name      JVM 通过它向 Java 报告宿主 OS。游戏里每一次 LWJGL/Arc 的 native 查找都以它为
+ *                依据，而本设备上已知可用的参考配置在这里报 "Linux" —— 若用真实值，游戏会去找
+ *                这个布局里并不存在的 HarmonyOS/Android natives。
+ *   user.home    游戏存放存档和设置的地方。没有它，JVM 会从 /etc/passwd 猜，而这里并没有那个
+ *                文件。
+ *   user.dir     启动时相对路径的工作目录。
  *
- * Provenance: that these need setting was learned from a known-good reference
- * launcher running on this same device, not from any published source. Our own
- * notes disagree about how that reference supplies them -- as creation options,
- * or through System.setProperty once the VM is up -- which does not matter
- * here: they must be in place before class initialisation, so this launcher
- * passes them at creation. Only the os.name value mirrors the reference;
- * user.home and user.dir are this launcher's own sandbox paths (DEST_ROOT).
+ * 出处：这些需要设置，是从一个在同一设备上运行、已知可用的参考启动器里学到的，不是来自任何公开
+ * 来源。我们自己的笔记对「那个参考如何提供它们」说法不一 —— 是作为创建选项，还是在 VM 起来后
+ * 通过 System.setProperty —— 但在这里无关紧要：它们必须在类初始化之前就位，所以本启动器在创建
+ * 时传入。只有 os.name 的值照搬参考；user.home 和 user.dir 是本启动器自己的沙箱路径
+ * （DEST_ROOT）。
  */
 static char opt_osname[512];
 static char opt_userhome[512];
 static char opt_userdir[512];
-/* where LWJGL looks for the natives it dispatches through -- see LWJGL_LIBS */
+/* [B] LWJGL 从哪里找它用来分发的 natives —— 见 LWJGL_LIBS */
 static char opt_lwjglpath[512];
-/*
- * Tell Arc's SDL backend to ask for the OpenGL ES profile.
+/* [A]
+ * 告诉 Arc 的 SDL 后端去要 OpenGL ES profile。
  *
- * OpenHarmony ships OpenGL ES and Vulkan and no libGL.so at all, so a core or
- * compatibility request binds EGL_OPENGL_API, finds no config, and the window
- * cannot be created. Arc has no way to work this out for itself, so the choice
- * is made here. Read by SdlApplication.profile(); see arc.sdl.glEs there.
+ * OpenHarmony 只带 OpenGL ES 和 Vulkan，根本没有 libGL.so，所以一个 core 或 compatibility
+ * 请求会绑定 EGL_OPENGL_API、找不到任何 config，窗口就创建不出来。Arc 自己没法想明白这点，
+ * 所以在这里替它做选择。由 SdlApplication.profile() 读取；见那里的 arc.sdl.glEs。
  */
 static char opt_gles[512];
-/*
- * Tell Arc this is a touch device.
+/* [A]
+ * 告诉 Arc 这是一台触屏设备。
  *
- * The backend answers isMobile() from getType(), which is android or iOS and so
- * false here, and Mindustry picks its entire input layer from that one bit:
+ * 后端从 getType() 得到 isMobile() 的答案，而它只可能是 android 或 iOS，所以在这里是 false，
+ * 于是 Mindustry 从那一个 bit 决定它整个输入层：
  *
  *     input = Vars.mobile ? new MobileInput() : new DesktopInput();
  *
- * False means a tablet gets WASD bindings, no joystick and no on-screen buttons
- * -- a desktop build on a touch screen, which is exactly what it looked like.
- * Read by SdlApplication.isMobile(); see arc.sdl.mobile there.
+ * false 意味着平板拿到的是 WASD 键位、没有摇杆、也没有屏幕按钮 —— 一个跑在触屏上的桌面版，
+ * 而这正是它当时看起来的样子。由 SdlApplication.isMobile() 读取；见那里的 arc.sdl.mobile。
  */
 static char opt_mobile[512];
 
-/*
- * Where the game's file browser should open.
+/* [A]
+ * 游戏的文件浏览器应该从哪里打开。
  *
- * The game roots it at Arc's getExternalStoragePath(), which SdlFiles computes
- * from user.home -- and user.home is this launcher's own sandbox, the one place
- * the player cannot put a file. So "import save" could browse but never find
- * anything to import.
+ * 游戏把它根植在 Arc 的 getExternalStoragePath() 上，而 SdlFiles 是从 user.home 算出它的 ——
+ * 而 user.home 是本启动器自己的沙箱，正是玩家放不了文件的那个地方。所以「导入存档」能浏览，
+ * 却永远找不到任何可导入的东西。
  *
- * The value is not hardcoded: ArkTS asks the platform for its real
- * user-visible directory (environment.getUserDownloadDir) and writes it to
- * user_dirs.txt, and this reads it back. That keeps a device-specific path out
- * of the launcher, and the permission behind it (granted at runtime) is what
- * makes the directory readable at all -- measured, see probe_user_dirs().
+ * 这个值不是硬编码的：ArkTS 向平台要它真实的用户可见目录（environment.getUserDownloadDir），
+ * 写到 user_dirs.txt，这里再读回来。这样就把一个设备相关的路径挡在启动器之外，而它背后的那个
+ * 权限（运行时授予）才是让该目录变得可读的原因 —— 实测过，见 probe_user_dirs()。
  */
 static char opt_chooser[512];
 
-/*
- * Ordered probe. "Error loading X: (needed by Y)" is ambiguous about WHERE in
- * the chain it broke, so ask each question separately and print the answer with
- * its own dlerror(). Everything here is read-only.
+/* [A]
+ * 有序探测。"Error loading X: (needed by Y)" 对于「链条的哪一环断了」是含糊的，所以把每个
+ * 问题分开问，并用各自的 dlerror() 打印答案。这里的一切都是只读的。
  */
 static void dump_dir(const char *label, const char *dirpath, int limit)
 {
@@ -1049,8 +958,8 @@ static void probe_mode(const char *path)
 
 static void probe_dlopen(const char *label, const char *path)
 {
-    /* same flags as the real load -- a probe that uses RTLD_NOW would report a
-     * failure for a library that actually loads fine in lazy mode. */
+    /* [A] 与真正的加载用同样的 flag —— 一个用 RTLD_NOW 的探测，会把一个在 lazy 模式下其实能
+     * 正常加载的库报成失败。 */
     void *h = dlopen(path, RTLD_LAZY | RTLD_GLOBAL);
     if (h) {
         SDL_Log("   OK  %-20s %s", label, path);
@@ -1060,34 +969,28 @@ static void probe_dlopen(const char *label, const char *path)
     }
 }
 
-/*
- * A short, ordered list of questions whose answers cannot be inferred from each
- * other: is the file there, what mode is it, does the CONTROL load, do the two
- * pieces of the JVM load. Earlier rounds of this launcher wasted a lot of time on
- * a single ambiguous message like
+/* [A]
+ * 一份简短的、有序的问题清单，它们的答案彼此无法推断：文件在不在，它是什么 mode，CONTROL 能
+ * 不能加载，JVM 的那两块能不能加载。本启动器早先的几轮，在一个像
  *      Error loading shared library X: (needed by Y)
- * which is compatible with a dozen different causes.
+ * 这样的含混消息上浪费了大量时间，而它与十来种不同原因都相容。
  *
- * Kept deliberately narrow -- the A/B experiments that found the real bug (a
- * corrupted .dynamic table, see patch_libjvm.py) have done their job and their
- * probe files are gone.
+ * 刻意保持窄小 —— 那些找出真正 bug 的 A/B 实验（一张损坏的 .dynamic 表，见 patch_libjvm.py）
+ * 已经完成了它们的使命，它们的探测文件也没了。
  */
-/*
- * Is a HAP resource file reachable as an ORDINARY FILESYSTEM PATH?
+/* [A]
+ * 一个 HAP 资源文件，能否作为一个【普通文件系统路径】被访问到？
  *
- * This matters more than it looks. hvigor ships only `*.so` from entry/libs/, so
- * the JDK that way loses every data file -- `modules` (forcing the jimg.so
- * rename), `conf/`, `release`, `classlist`, `jvm.cfg`. A HAP's rawfile area has
- * no such filter: whatever is placed under resources/rawfile goes in verbatim,
- * names intact.
+ * 这比它看起来更重要。hvigor 从 entry/libs/ 只分发 `*.so`，所以走那条路的 JDK 会丢掉每一个
+ * 数据文件 —— `modules`（逼出了 jimg.so 这个改名）、`conf/`、`release`、`classlist`、
+ * `jvm.cfg`。而 HAP 的 rawfile 区没有这种过滤：凡是放在 resources/rawfile 下的都原样进去，
+ * 名字完好。
  *
- * If that area also exists as a real path under the app's bundle directory, then
- * the ENTIRE UNMODIFIED JDK can ship there -- which would remove the rename, the
- * missing configuration files, and the need for a custom ELF loader all at once.
+ * 如果那个区在应用的 bundle 目录下也以一个真实路径存在，那么【整个未修改的 JDK】都能在那里
+ * 分发 —— 这会一下子去掉改名、缺失的配置文件，以及对自定义 ELF loader 的需要。
  *
- * So: place `resources/rawfile/rawfile_probe.txt` in the project, build, and ask
- * the running app which of the plausible paths actually resolves. Only the app
- * can see its own bundle area; hdc cannot.
+ * 所以：在项目里放一个 `resources/rawfile/rawfile_probe.txt`，构建，然后问正在运行的应用，
+ * 那些看似合理的路径里究竟哪一条能解析到。只有应用能看见它自己的 bundle 区；hdc 不能。
  */
 static void probe_rawfile(void)
 {
@@ -1115,19 +1018,17 @@ static void probe_rawfile(void)
     SDL_Log(" ----------------------------");
 }
 
-/*
- * Can this process reach the system's EGL/GLES at all?
+/* [A]
+ * 这个进程到底能不能访问到系统的 EGL/GLES？
  *
- * SDL's OpenHarmony video driver loads exactly two names, by bare name rather
- * than by path: DEFAULT_EGL "libEGL.so" and DEFAULT_OGL_ES2 "libGLESv3.so". Both
- * files exist on the device (/system/lib64), so SDL_CreateWindow failing with
- * "Could not initialize OpenGL / GLES library" means the load is being refused
- * rather than the file being absent -- and those are very different problems.
+ * SDL 的 OpenHarmony 视频驱动恰好加载两个名字，用的是裸名而不是路径：DEFAULT_EGL "libEGL.so"
+ * 和 DEFAULT_OGL_ES2 "libGLESv3.so"。两个文件在设备上都存在（/system/lib64），所以
+ * SDL_CreateWindow 以 "Could not initialize OpenGL / GLES library" 失败，意味着加载被拒绝，
+ * 而不是文件不存在 —— 这是两个非常不同的问题。
  *
- * The bare name matters: a bare name goes through the linker's search path for
- * this process, which for an app is a restricted namespace, whereas an absolute
- * path either resolves or does not. Asking for both forms at once separates
- * "not on the search path" from "not permitted at all".
+ * 裸名很关键：裸名会走 linker 为这个进程设置的搜索路径，而对一个应用而言那是一个受限命名空间，
+ * 而绝对路径要么能解析、要么不能。同时问这两种形式，就能把「不在搜索路径上」与「根本不被允许」
+ * 区分开。
  */
 static void probe_gl_libs(void)
 {
@@ -1138,16 +1039,14 @@ static void probe_gl_libs(void)
         "/system/lib64/libEGL.so",
         "/system/lib64/libGLESv3.so",
     };
-    /*
-     * Both binding modes, because SDL uses RTLD_NOW:
+    /* [A]
+     * 两种绑定模式都测，因为 SDL 用的是 RTLD_NOW：
      *
      *     handle = dlopen(sofile, RTLD_NOW | RTLD_LOCAL);   // SDL_sysloadso.c
      *
-     * LAZY resolves function relocations at first call, so a library with a
-     * symbol nothing provides still loads. NOW resolves everything up front and
-     * refuses. A library that loads lazily and fails eagerly is indistinguishable
-     * from a missing library if only one mode is tested -- and this project has
-     * already been fooled once by exactly that, with __cxa_thread_atexit.
+     * LAZY 在首次调用时才解析函数重定位，所以一个带有无人提供之符号的库仍然能加载。NOW 则
+     * 把所有东西都提前解析并拒绝。如果只测一种模式，一个懒加载能成、急加载失败的库，就与一个
+     * 缺失的库无从区分 —— 而这个项目已经被这点骗过一次了，就在 __cxa_thread_atexit 上。
      */
     SDL_Log(" ==== GL library reachability ====");
     for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
@@ -1167,12 +1066,11 @@ static void probe_gl_libs(void)
     SDL_Log(" ==== end GL probe ====");
 }
 
-/*
- * Aim the game's SDL at the system GLES library.
+/* [A]
+ * 把游戏的 SDL 瞄准系统的 GLES 库。
  *
- * Arc's SDL backend never asks for the ES profile -- it only ever sets CORE or
- * COMPATIBILITY -- and SDL's OpenHarmony driver loads libGLESv3.so ONLY when the
- * profile is ES and the major version is above 1:
+ * Arc 的 SDL 后端从不索要 ES profile —— 它只会设 CORE 或 COMPATIBILITY —— 而 SDL 的
+ * OpenHarmony 驱动【只有】在 profile 是 ES 且主版本号大于 1 时才加载 libGLESv3.so：
  *
  *     if (_this->gl_config.profile_mask == SDL_GL_CONTEXT_PROFILE_ES) {
  *         if (_this->gl_config.major_version > 1) {
@@ -1188,37 +1086,31 @@ static void probe_gl_libs(void)
  *     #endif
  *     }
  *
- * OpenHarmony defines only DEFAULT_OGL_ES2, so with a CORE or COMPATIBILITY
- * profile nothing is loaded at all and the window creation fails with "Could not
- * initialize OpenGL / GLES library" -- which reads like a missing library and is
- * not one. Both libEGL.so and libGLESv3.so load fine from this process, by bare
- * name and by path, lazily and eagerly; that was measured before this was
- * written.
+ * OpenHarmony 只定义了 DEFAULT_OGL_ES2，所以用 CORE 或 COMPATIBILITY profile 时什么都
+ * 不加载，窗口创建以 "Could not initialize OpenGL / GLES library" 失败 —— 那读起来像是缺库，
+ * 但并不是。libEGL.so 和 libGLESv3.so 从这个进程里都能正常加载，按裸名和按路径、懒加载和
+ * 急加载都行；这在这段代码写下之前就测过了。
  *
- * SDL_HINT_OPENGL_LIBRARY is checked before any of that branching, so it is the
- * one lever that does not require changing Arc. SDL_HINT_OPENGL_ES_DRIVER, which
- * sounds like the right knob, is only consulted by the Windows, X11 and Cocoa
- * backends, never by the shared EGL path.
+ * SDL_HINT_OPENGL_LIBRARY 在上述任何分支之前就被检查，所以它是唯一一个不需要改动 Arc 的
+ * 杠杆。SDL_HINT_OPENGL_ES_DRIVER 听起来像是对的那个旋钮，但它只被 Windows、X11 和 Cocoa
+ * 后端查询，共享的 EGL 路径从不看它。
  *
- * The hint has to be set on the SDL instance the GAME will use, which is not the
- * one this launcher links against: the game reaches SDL through LWJGL, and LWJGL
- * loads the copy in LWJGL_LIBS. dlopen of that same path returns the same
- * mapping, so setting the hint through it reaches the right instance.
+ * 这个 hint 必须设在【游戏】将要使用的那个 SDL 实例上，而不是本启动器链接的那个：游戏通过
+ * LWJGL 到达 SDL，而 LWJGL 加载的是 LWJGL_LIBS 里的那份副本。dlopen 同一个路径返回的是同一个
+ * 映射，所以经由它设置 hint 能到达正确的实例。
  */
 static void configure_game_sdl(void)
 {
     const char *sdlpath = BUNDLE_LIBS "/libSDL3.so";
 
-    /*
-     * There is more than one libSDL3.so in the bundle, and the obvious
-     * assumption -- that the game uses the one next to the LWJGL jars -- is
-     * worth checking before trusting it, because both copies are built with
-     * -DCMAKE_PLATFORM_NO_VERSIONED_SONAME=1 and therefore both carry the SONAME
-     * "libSDL3.so". A loader that resolves by SONAME returns whichever copy was
-     * loaded first, which here is the launcher's own. Setting a hint on the
-     * other mapping would then look like it worked and change nothing.
+    /* [A]
+     * bundle 里不止一个 libSDL3.so，而那个显而易见的假设 —— 游戏用的是 LWJGL jars 旁边的那
+     * 一个 —— 值得在信任它之前先验证，因为两份副本都是用
+     * -DCMAKE_PLATFORM_NO_VERSIONED_SONAME=1 构建的，因此都带着 SONAME "libSDL3.so"。一个
+     * 按 SONAME 解析的 loader 会返回先加载的那份副本，而在这里那就是启动器自己的。那么在另一个
+     * 映射上设置 hint 就会显得像是生效了，其实什么都没变。
      *
-     * SDL_GetHint's address answers it: same address means same instance.
+     * SDL_GetHint 的地址能回答它：地址相同就意味着是同一个实例。
      */
     void *h = dlopen(sdlpath, RTLD_LAZY | RTLD_GLOBAL);
     SDL_Log(" --- configuring SDL ---");
@@ -1234,14 +1126,11 @@ static void configure_game_sdl(void)
                     : "DIFFERENT instance");
     }
 
-    /*
-     * Both routes, because which one matters depends on the answer above: the
-     * direct call is the launcher's own SDL, the handle route is whatever that
-     * path resolves to. Setting it on both costs nothing and removes the need to
-     * have got the instance question right.
+    /* [A]
+     * 两条路都走，因为哪条要紧取决于上面的答案：直接调用是启动器自己的 SDL，句柄那条路是那个
+     * 路径实际解析到的东西。两边都设没有代价，还免去了必须把实例问题答对的需要。
      *
-     * priority 2 is SDL_HINT_OVERRIDE, the highest, so nothing running later can
-     * quietly ignore it.
+     * priority 2 是 SDL_HINT_OVERRIDE，最高级，所以之后运行的任何东西都无法悄悄无视它。
      */
     struct { const char *k, *v; } hints[] = {
         { "SDL_OPENGL_LIBRARY", "/system/lib64/libGLESv3.so" },
@@ -1252,9 +1141,8 @@ static void configure_game_sdl(void)
                              : NULL;
 
     for (unsigned i = 0; i < sizeof(hints) / sizeof(hints[0]); i++) {
-        /* bool, not SDL_bool: SDL3 renamed it, and the old name now expands to a
-         * deliberately undeclared identifier so that stale code fails to build
-         * rather than silently mismatching. */
+        /* [A] 是 bool，不是 SDL_bool：SDL3 改了名，而旧名字现在展开成一个刻意未声明的标识符，
+         * 好让过时的代码构建失败，而不是悄悄类型不匹配。 */
         bool direct = SDL_SetHintWithPriority(hints[i].k, hints[i].v,
                                               SDL_HINT_OVERRIDE);
         bool via = viaHandle ? viaHandle(hints[i].k, hints[i].v, 2) : false;
@@ -1263,17 +1151,13 @@ static void configure_game_sdl(void)
                 via ? "ok" : "-", SDL_GetHint(hints[i].k));
     }
 
-    /*
-     * Ask each instance to do the load the game's SDL does internally, and let
-     * it say why if it cannot.
+    /* [A]
+     * 让每个实例去做游戏 SDL 内部会做的那个加载，做不到就让它说明原因。
      *
-     * The hint is set on both copies and read back correctly on both, and the
-     * game still reports the same failure -- so the hint is not the thing that
-     * matters here. This asks the question the hint was standing in for: can
-     * THIS instance load the system GLES library at all? A library loaded
-     * through one path can end up in a different linker namespace from one
-     * loaded through another, and a namespace that cannot see /system/lib64
-     * would explain everything while looking exactly like a missing file.
+     * hint 在两份副本上都设了，也在两边都正确读回，而游戏仍然报同样的失败 —— 所以 hint 在这里
+     * 不是要紧的东西。这里问的是 hint 当初替它顶着的那个问题：【这个】实例到底能不能加载系统
+     * GLES 库？通过一条路径加载的库，可能与通过另一条加载的落在不同的 linker 命名空间里，而一个
+     * 看不见 /system/lib64 的命名空间，会解释一切，同时看起来活像一个缺失的文件。
      */
     typedef void *(*loadobj_t)(const char *);
     typedef const char *(*geterr_t)(void);
@@ -1296,7 +1180,7 @@ static void configure_game_sdl(void)
     SDL_Log(" --- end SDL configuration ---");
 }
 
-/* copy src to dst, creating dst with mode 0755 */
+/* [B] 把 src 拷到 dst，以 mode 0755 创建 dst */
 static int copy_exec_file(const char *src, const char *dst)
 {
     int in = open(src, O_RDONLY);
@@ -1321,25 +1205,21 @@ static int copy_exec_file(const char *src, const char *dst)
     return rc;
 }
 
-/*
- * Can this process dlopen a library that sits in its OWN writable area?
+/* [A]
+ * 这个进程能不能 dlopen 一个位于它【自己】可写区里的库？
  *
- * This is the question the whole JDK-placement design turned on, and the answer
- * on record ("no, the sandbox is not executable") came from a single sample --
- * a hand-written shim that may have failed for its own reasons. That is not a
- * good enough basis, and the cost of being wrong is high: if libarcarm64.so can
- * be loaded from a writable directory, Arc's own extraction works and nothing
- * special is needed; if it cannot, the whole native layout has to change.
+ * 这是整个 JDK 放置设计所系的那个问题，而记录在案的答案（「不能，沙箱不可执行」）来自单个样本
+ * —— 一个可能因为自身原因而失败的手写 shim。那不是一个足够好的依据，而出错的代价很高：如果
+ * libarcarm64.so 能从一个可写目录加载，Arc 自己的解包就能工作，什么都不用特殊处理；如果不能，
+ * 整个 native 布局都得改。
  *
- * Arc's loader puts the library in java.io.tmpdir. Under AMCL that directory was
- * the module-level files dir and the game ran; here it is the app-level temp dir
- * and the load fails with EINVAL. Both are writable, so the difference, if it is
- * real, is in how they are mounted -- and there are only a handful of candidates.
+ * Arc 的 loader 把这个库放进 java.io.tmpdir。在 AMCL 下那个目录是模块级 files 目录，游戏能跑；
+ * 这里它是应用级 temp 目录，加载以 EINVAL 失败。两者都是可写的，所以差别如果真实存在，就在它们
+ * 如何被挂载上 —— 而候选只有屈指可数的几个。
  *
- * So: two different libraries (one sample would not distinguish a platform rule
- * from a property of the file), copied into every candidate directory, each
- * dlopen'd and each reported with its own dlerror. The bundle copy is the
- * control: it must succeed, or the probe itself is broken.
+ * 所以：用两个不同的库（单个样本无法区分一条平台规则和一个文件自身的属性），拷进每一个候选
+ * 目录，各自 dlopen，各自用它自己的 dlerror 报告。bundle 里的那份是对照：它必须成功，否则探测
+ * 本身就坏了。
  */
 static void probe_sandbox_exec(void)
 {
@@ -1349,13 +1229,13 @@ static void probe_sandbox_exec(void)
     };
     static const char *names[] = { "liblwjgl.so", "libSDL3.so" };
     static const char *dirs[] = {
-        DEST_ROOT,                                    /* app-level files   */
+        DEST_ROOT,                                    /* [B] 应用级 files   */
         DEST_ROOT "/execprobe",
-        TMP_DIR,                                      /* app-level temp    */
+        TMP_DIR,                                      /* [B] 应用级 temp    */
         TMP_DIR "/execprobe",
-        "/data/storage/el2/base/haps/entry/files",    /* module-level files,
-                                                       * which is where AMCL
-                                                       * extracted to        */
+        "/data/storage/el2/base/haps/entry/files",    /* [B] 模块级 files，
+                                                       * 也就是 AMCL 解包
+                                                       * 到的地方           */
         "/data/storage/el2/base/haps/entry/files/execprobe",
     };
     const unsigned NSRC = sizeof(srcs) / sizeof(srcs[0]);
@@ -1413,62 +1293,50 @@ static void diagnose_loading(void)
     SDL_Log(" =================================================");
 }
 
-/*
- * Extra JVM options, read at run time from a file in the app's own sandbox.
+/* [A]
+ * 额外的 JVM 选项，运行时从应用自己沙箱里的一个文件读取。
  *
- * Why this exists: trying one -XX flag used to cost a full rebuild, re-sign,
- * reinstall of a 171 MB HAP and a relaunch -- several minutes per guess, for a
- * question ("which flag stops the trap?") that needs many guesses. The sandbox
- * directory is writable by the app and readable over hdc, so a plain text file
- * pushed with `hdc file send` turns that loop into seconds.
+ * 为什么有它：试一个 -XX flag 过去要付出一整套重建、重签、重装 171 MB HAP 并重启的代价 ——
+ * 每次猜测好几分钟，而这个问题（「哪个 flag 能止住陷阱？」）需要猜很多次。沙箱目录应用可写、
+ * hdc 可读，所以用 `hdc file send` 推一个纯文本文件进去，就把那个循环变成几秒钟。
  *
- * One option per line; blank lines and lines starting with # are ignored.
+ * 每行一个选项；空行和以 # 开头的行被忽略。
  */
-/*
- * How many options this launcher supplies itself, before whatever the runtime
- * options file adds.
+/* [A]
+ * 本启动器自己提供多少个选项，在运行时选项文件追加的任何东西之前。
  *
- * It is a named constant because it is used as an array bound and as an index
- * origin in five places; when it was a bare 11, adding a built-in option meant
- * finding every one of them, and missing one would silently drop options or
- * read past the filled part of the array.
+ * 它是一个具名常量，因为它被用作数组上界和索引基点，共五处；当它还是一个光秃秃的 11 时，
+ * 加一个内置选项就意味着要把它们每一处都找出来，漏掉一处就会悄悄丢掉选项、或者读过数组已填充的
+ * 部分。
  */
 #define BASE_OPTS 18
 #define MAX_EXTRA_OPTS 32
 static char g_extra[MAX_EXTRA_OPTS][256];
 
-/* Candidate locations, tried in order.
+/* [A] 候选位置，按顺序尝试。
  *
- * WARNING: A THIRD ENTRY USED TO BE HERE -- "/data/local/tmp/jvm.options" -- and it was
- * removed on 2026-09-22 because it cannot work. Measured: the file was pushed
- * there with `hdc file send` and was readable from the shell, and the launcher
- * still reported "no options file found; tried 3 locations" -- every fopen
- * failed. /data/local/tmp is not reachable for this app's uid. The surrounding
- * comment described it as the iteration channel for tweaking flags without a
- * rebuild, so an entry that could never open was actively misleading: it made
- * "the flag had no effect" look like a result about the flag.
+ * 警告：这里【曾经】有第三个条目 —— "/data/local/tmp/jvm.options" —— 它已于 2026-09-22 被
+ * 移除，因为它不可能工作。实测：文件用 `hdc file send` 推到了那里，从 shell 里可读，而启动器
+ * 仍然报告 "no options file found; tried 3 locations" —— 每一次 fopen 都失败。
+ * /data/local/tmp 对这个应用的 uid 不可达。周围的注释把它描述成「不用重建就能调 flag」的迭代
+ * 通道，所以一个永远打不开的条目起到了实实在在的误导作用：它让「该 flag 没有效果」看起来像是
+ * 关于该 flag 的结论。
  *
- * The iteration channel that DOES work is the second entry, DEST_ROOT -- and the
- * direction is the other way round from what the old comment claimed: hdc can
- * READ it (it is on the public view of the sandbox) but cannot write it, so the
- * app writes and the shell reads. */
+ * 真正管用的迭代通道是第二个条目 DEST_ROOT —— 而且方向与旧注释所称的相反：hdc 能【读】它
+ * （它在沙箱的公开视图上）但不能写它，所以是应用写、shell 读。 */
 static const char *OPTION_PATHS[] = {
-    /* ArkTS writes here from the launch parameters -- see EntryAbility.ets.
-     * context.filesDir resolves to the ability's own files dir, which is NOT the
-     * same directory as DEST_ROOT (that one is the application-level files dir).
+    /* [A] ArkTS 从启动参数写到这里 —— 见 EntryAbility.ets。
+     * context.filesDir 解析到 ability 自己的 files 目录，它【不是】DEST_ROOT 那个目录
+     * （那一个是应用级 files 目录）。
      *
-     *  This is how the platform-version fallback works: on a phone below API 26
-     *  the JVM cannot get anonymous executable memory and must run interpreted, so
-     *  ArkTS writes -Xint here. See RELEASE-MAINTENANCE.md 2.12. The file has to
-     *  be REWRITTEN IN BOTH DIRECTIONS on every launch -- a conditional write
-     *  with a matching delete leaves -Xint behind after a phone is upgraded past
-     *  26, and the game then runs permanently interpreted with nothing to explain
-     *  why.
+     *  平台版本回退就是这样工作的：在低于 API 26 的手机上，JVM 拿不到匿名可执行内存，必须解释
+     *  执行，所以 ArkTS 在这里写 -Xint。见 RELEASE-MAINTENANCE.md 2.12。这个文件必须在每次启动时
+     *  【双向重写】—— 一次条件写入加一次对应的删除，会在手机升级过 26 之后把 -Xint 留在那里，
+     *  游戏于是永久以解释模式运行，而没有任何东西能解释为什么。
      *
-     *  WARNING: The launcher ALSO forces -Xint by itself when probe_exec_mem() says the
-     *  memory is unavailable, which covers the cases an API-version rule cannot:
-     *  a phone at API 26 with a store signature, and a tablet without the ACL.
-     *  This file is the request; that probe is the authority. */
+     *  警告：当 probe_exec_mem() 说内存不可用时，启动器【也】会自己强制 -Xint，这覆盖了
+     *  API 版本规则覆盖不到的情形：一台带商店签名、处于 API 26 的手机，以及一台没有 ACL 的
+     *  平板。这个文件是请求；那个探测才是权威。 */
     "/data/storage/el2/base/haps/entry/files/jvm.options",
     DEST_ROOT "/jvm.options",
 };
@@ -1482,7 +1350,7 @@ static const char *open_options_file(void)
     return NULL;
 }
 
-/* does any candidate options file contain this marker? (non-static: used in main) */
+/* [B] 任何一个候选选项文件里含有这个标记吗？（非 static：main 里要用） */
 int options_contain(const char *needle)
 {
     for (unsigned i = 0; i < sizeof(OPTION_PATHS) / sizeof(OPTION_PATHS[0]); i++) {
@@ -1526,24 +1394,20 @@ static int load_extra_options(JavaVMOption *out, int base)
     return n;
 }
 
-/*
- * Can this process actually RUN code it generated into anonymous memory?
+/* [A]
+ * 这个进程到底能不能【运行】它生成进匿名内存里的代码？
  *
- * This is the one capability the whole ACL detour was about
- * (ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY). A JVM cannot start
- * without it: HotSpot writes stubs and trampolines into anonymous RWX memory and
- * then jumps into them. If those pages are not truly executable, or the write is
- * not visible to the instruction fetch, the CPU traps -- and the fault address
- * lies in no module at all, so dladdr() reports "in ?", which is exactly what
- * the SIGILL inside JNI_CreateJavaVM looked like.
+ * 这正是整个 ACL 绕行所围绕的那一项能力（ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY）。
+ * 没有它 JVM 无法启动：HotSpot 把 stub 和 trampoline 写进匿名 RWX 内存，然后跳进去。如果那些页
+ * 并非真的可执行，或者写入对指令取指不可见，CPU 就会陷入陷阱 —— 而出错地址根本不在任何模块里，
+ * 所以 dladdr() 报 "in ?"，这正是 JNI_CreateJavaVM 里面那次 SIGILL 的样子。
  *
- * So ask the question directly instead of inferring it from a crash: map one RWX
- * page, write a two-instruction aarch64 function into it, flush the icache, call
- * it. Expected answer 42.
+ * 所以直接问这个问题，而不是从一次崩溃里推断它：映射一个 RWX 页，往里面写一个两指令的 aarch64
+ * 函数，刷新 icache，调用它。预期答案是 42。
  */
 static long probe_exec_mem(void)
 {
-    /* mov w0, #42 ; ret */
+    /* [B] mov w0, #42 ; ret */
     static const unsigned int code[2] = { 0x52800540u, 0xd65f03c0u };
 
     void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -1563,60 +1427,51 @@ static long probe_exec_mem(void)
     return r;
 }
 
-/*
+/* [C]
  * ---------------------------------------------------------------------------
- * SELF-MODIFYING CODE: does a store to an ALREADY-EXECUTABLE page take effect?
+ * 自修改代码：对一个【已经可执行】的页做一次写入，会生效吗？
  *
- * WHY THIS IS THE RIGHT QUESTION NOW
- *   HarmonyOS blocks exactly two things related to executable memory -- mapping a
- *   FILE as executable, and memfd as executable -- while allowing anonymous
- *   executable memory freely. Both blocks are about "code that came from a file".
- *   (Measured previously on this project's probes: errno=13 for both.)
+ * 为什么现在这是对的问题
+ *   HarmonyOS 恰好封锁与可执行内存有关的两件事 —— 把一个【文件】映射为可执行，以及把 memfd
+ *   映射为可执行 —— 同时却自由地允许匿名可执行内存。两条封锁都是关于「来自文件的代码」的。
+ *   （本项目早先的探测里实测过：两者都是 errno=13。）
  *
- *   All of HotSpot's generated code lives in anonymous memory (our crash dump's
- *   mapping line has no file backing: `rwxp 00000000 00:00 0`), so those blocks do
- *   not stop the JVM from RUNNING generated code.
+ *   HotSpot 生成的全部代码都住在匿名内存里（我们的崩溃 dump 里那行映射没有文件支撑：
+ *   `rwxp 00000000 00:00 0`），所以那些封锁并不能阻止 JVM【运行】生成的代码。
  *
- *   But they put the focus on the one property nobody has tested here: HotSpot's
- *   code cache is simultaneously writable and executable, and HotSpot PATCHES
- *   code in place -- it stores new instructions into a page that is already
- *   executable, with no mprotect round-trip. On ARM, the data cache and the
- *   instruction cache are not coherent, so such a store is only visible to the
- *   fetch unit after explicit cache maintenance. If that maintenance does not
- *   happen, or does not work in this sandbox, the CPU executes the PREVIOUS
- *   contents of those bytes.
+ *   但它们把焦点引到了这里没人测过的那一个属性上：HotSpot 的 code cache 同时可写且可执行，
+ *   而 HotSpot 会【就地】打补丁 —— 它把新指令写进一个已经可执行的页，不做 mprotect 往返。
+ *   在 ARM 上，数据缓存与指令缓存并不一致，所以这样一次写入只有在显式的缓存维护之后才对取指单元
+ *   可见。如果那次维护没有发生、或者在这个沙箱里不起作用，CPU 就会执行那些字节【先前】的内容。
  *
- *   That failure would look exactly like what we measured:
- *     - the memory matches what HotSpot printed at generation time (memory IS new)
- *     - the CPU nonetheless goes somewhere else (it is running the old bytes)
- *     - it is fully deterministic (same patch sequence every run)
- *     - -Xint and the code-cache sizing flags change the offset but never fix it
- *     - the fault sits immediately after a blr, at a patched constant -- the
- *       exact place a freshly patched site is first executed
+ *   那种失败看起来会和我们测到的完全一样：
+ *     - 内存与 HotSpot 在生成时打印的一致（内存【是】新的）
+ *     - CPU 却仍然去了别处（它在跑旧字节）
+ *     - 它完全确定（每次运行都是同样的补丁序列）
+ *     - -Xint 和 code-cache 尺寸相关的 flag 会改变偏移，但从不修复它
+ *     - 出错点紧跟在一次 blr 之后，位于一个被打补丁的常量处 —— 正是新打上补丁的位置第一次被
+ *       执行的地方
  *
- * THE FOUR MEASUREMENTS
- *   1. write A, flush, run          -> expect 1   (baseline: exec works)
- *   2. write B, NO flush, run       -> 2 means the caches are coherent here and
- *                                      the hypothesis is dead; 1 means the fetch
- *                                      unit kept the old instruction
- *   3. write C, flush, run          -> expect 3   (does explicit maintenance work?)
- *   4. write D, mprotect RW then RX -> expect 4   (does the mprotect path work?)
+ * 四次测量
+ *   1. 写 A，flush，运行          -> 预期 1   （基线：执行能正常工作）
+ *   2. 写 B，【不】flush，运行     -> 2 意味着这里的缓存是一致的、假设已死；1 意味着取指单元
+ *                                      保留了旧指令
+ *   3. 写 C，flush，运行          -> 预期 3   （显式维护起作用吗？）
+ *   4. 写 D，mprotect RW 再 RX    -> 预期 4   （mprotect 这条路起作用吗？）
  *
- *   Step 3 is the decisive one. Step 2 alone does not prove a platform defect:
- *   on most ARMv8 cores a store without maintenance is legitimately invisible, and
- *   HotSpot knows that. What would be damning is step 3 failing, because that is
- *   the very operation HotSpot relies on.
+ *   第 3 步是决定性的。单看第 2 步并不能证明平台缺陷：在大多数 ARMv8 核上，不做维护的写入本就
+ *   合法地不可见，HotSpot 也知道这点。真正会定罪的是第 3 步失败，因为那正是 HotSpot 依赖的那
+ *   个操作。
  * ---------------------------------------------------------------------------
  */
-/*
- * One test case on its OWN fresh page.
+/* [A]
+ * 每个测试用例都在它【自己】全新的页上。
  *
- * A shared page is what broke the previous revision of this probe: case 4 left
- * the page mapped RX, so case 5's memcpy faulted before its own mprotect could
- * run, and the resulting SIGSEGV looked like a platform finding when it was a
- * bug in the test. A page per case removes every interaction.
+ * 共用一页，正是弄坏这个探测上一版的原因：用例 4 把页留在了 RX 映射上，于是用例 5 的 memcpy
+ * 在它自己的 mprotect 有机会跑之前就出错了，而由此产生的 SIGSEGV 看起来像一个平台层面的发现，
+ * 其实那是测试自身的 bug。每个用例一页，消除了所有相互作用。
  *
- * mode:
+ * mode：
  *   0  write, clear_cache, call
  *   1  write, no maintenance, call
  *   2  write, mprotect RW->RX, call
@@ -1627,14 +1482,14 @@ static long probe_exec_mem(void)
 static long icache_case(int expect, int mode)
 {
     unsigned int code[2] = { 0x52800000u | ((unsigned)expect << 5), 0xd65f03c0u };
-    /* movz w0, #expect ; ret   -- the immediate lives in bits 20:5 */
+    /* [B] movz w0, #expect ; ret   —— 立即数位于 bit 20:5 */
 
     void *p = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (p == MAP_FAILED) { SDL_Log("    mmap failed errno=%d", errno); return -1; }
 
     long r = -1;
-    /* every write happens while the page is still RWX or has been made RW */
+    /* [B] 每一次写入都发生在页仍是 RWX、或者已被改成 RW 的时候 */
     SDL_memcpy(p, code, 8);
 
     long (*fn)(void) = (long (*)(void))p;
@@ -1668,7 +1523,7 @@ static long icache_case(int expect, int mode)
         long a = fn();
         long b = fn();
         long c = fn();
-        r = (a == b && b == c) ? a : -100 - (int)a;   /* encode instability */
+        r = (a == b && b == c) ? a : -100 - (int)a;   /* [B] 把不稳定性编码进去 */
         break;
     }
     }
@@ -1676,30 +1531,26 @@ static long icache_case(int expect, int mode)
     return r;
 }
 
-/*
- * Overwrite code that HAS ALREADY BEEN EXECUTED.
+/* [A]
+ * 覆盖【已经执行过】的代码。
  *
- * This is the scenario that matters, and an earlier revision of this probe lost
- * it by giving each case a never-executed page: a write to a page whose
- * instructions have never been fetched is trivially fine, so every case passed
- * and the hypothesis looked dead for the wrong reason.
+ * 这才是有意义的场景，而这个探测的上一版弄丢了它，因为它给每个用例一个从未执行过的页：对一个
+ * 指令从未被取指过的页做写入，是显然没问题的，于是每个用例都通过，假设就因为错误的原因显得死了。
  *
- * HotSpot does exactly this: it generates code, the code runs, and later HotSpot
- * goes back and PATCHES those same instructions (writes an address into a site
- * that was already executed). So every case here does:
+ * HotSpot 做的正是这件事：它生成代码，代码运行，之后 HotSpot 回过头去【给】那些同样的指令
+ * 打补丁（把地址写进一个已经被执行过的位置）。所以这里每个用例都做：
  *
- *     write v1 -> make it visible -> CALL it   (this populates the fetch unit)
- *     write v2 -> apply the mechanism under test -> CALL again
+ *     写 v1 -> 让它可见 -> 【调用】它   （这会把取指单元填上）
+ *     写 v2 -> 施加被测机制 -> 再【调用】一次
  *
- * and reports the SECOND call. A correct platform returns v2. Returning v1 means
- * the fetch unit kept the old instruction.
+ * 并报告【第二次】调用的结果。一个正确的平台返回 v2。返回 v1 意味着取指单元保留了旧指令。
  *
- * mode (what happens between writing v2 and calling):
- *   0  nothing at all
- *   1  clear_cache                                  <- the CONTROL
+ * mode（写 v2 与调用之间发生什么）：
+ *   0  什么都不做
+ *   1  clear_cache                                  <- 对照组
  *   2  mprotect RW->RX
- *   3  mprotect RW->RX, then clear_cache
- *   4  clear_cache, then mprotect RW->RX
+ *   3  mprotect RW->RX，然后 clear_cache
+ *   4  clear_cache，然后 mprotect RW->RX
  */
 static long icache_rewrite_case(int v1, int v2, int mode)
 {
@@ -1711,7 +1562,7 @@ static long icache_rewrite_case(int v1, int v2, int mode)
     if (p == MAP_FAILED) return -1;
     long (*fn)(void) = (long (*)(void))p;
 
-    /* phase 1: install v1 and RUN it, so the fetch unit now holds v1 */
+    /* [B] 阶段 1：装入 v1 并【运行】它，于是取指单元现在持有 v1 */
     SDL_memcpy(p, c1, 8);
     __builtin___clear_cache((char *)p, (char *)p + 8);
     long first = fn();
@@ -1721,7 +1572,7 @@ static long icache_rewrite_case(int v1, int v2, int mode)
         return -1000;
     }
 
-    /* phase 2: overwrite with v2 using the mechanism under test */
+    /* [B] 阶段 2：用被测机制覆盖成 v2 */
     SDL_memcpy(p, c2, 8);
     switch (mode) {
     case 0: break;
@@ -1774,8 +1625,8 @@ static void probe_icache(void)
     SDL_Log(" ============================================================");
 }
 
-/* which mapping (if any) contains this address? async-signal-unsafe on purpose:
- * we are already dying and the answer matters more than the rules. */
+/* [A] 哪个映射（如果有）包含这个地址？刻意做成 async-signal-unsafe 的：
+ * 我们已经在垂死，答案比规则更重要。 */
 static void report_mapping(unsigned long addr, char *out, size_t cap)
 {
     FILE *f = fopen("/proc/self/maps", "r");
@@ -1795,23 +1646,19 @@ static void report_mapping(unsigned long addr, char *out, size_t cap)
     fclose(f);
 }
 
-/*
- * Say out loud which of the shipped files actually arrived.
+/* [A]
+ * 大声说出这些分发的文件里，究竟哪些真的到了。
  *
- * hvigor drops anything under entry/libs/** whose name does not end in ".so", and
- * it does so silently -- that is how the JDK's conf/ directory disappeared, and
- * it is the reason the game jar and the LWJGL jars are renamed. A missing file
- * here would otherwise surface much later as a confusing class-loading or
- * dlopen error, so it is worth one line each and a plain size.
+ * hvigor 会丢掉 entry/libs/** 下任何名字不以 ".so" 结尾的东西，而且是无声地丢 —— JDK 的 conf/
+ * 目录就是这么消失的，也正是游戏 jar 和 LWJGL jars 被改名的原因。这里一个缺失的文件，否则会在
+ * 很久之后表现为一个令人困惑的类加载或 dlopen 错误，所以值得每个文件一行、外加一个朴素的尺寸。
  */
-/*
- * TEMPORARY DIAGNOSTIC -- remove once the window question is settled.
+/* [B]
+ * 临时诊断 —— 窗口问题定下来后就移除。
  *
- * Writes a marker into the SAME file the instrumented SDL writes its XComponent
- * surface events to, so the two timelines can be read in one place. The question
- * being asked is one of ORDER -- does the surface still exist by the time the
- * game asks for a window, seconds after the surface callback started us -- and
- * two separate logs cannot answer that.
+ * 往【同一个】文件里写一个标记，那个文件也正是被插桩的 SDL 写它 XComponent surface 事件的地方，
+ * 这样两条时间线能在一处读。这里问的问题是【顺序】的问题 —— 在 surface 回调启动我们之后过了几秒，
+ * 游戏要窗口时那个 surface 是否还存在 —— 两份分开的日志回答不了它。
  */
 static void probe_mark(const char *what)
 {
@@ -1822,38 +1669,28 @@ static void probe_mark(const char *what)
     }
 }
 
-/*
- * Can this process reach the network at all?
+/* [A]
+ * 这个进程到底能不能访问网络？
  *
- * WHY A NATIVE PROBE AND NOT JUST WATCHING THE GAME
- *   The game already reports a failure on this path --
- *   "SocketException: Operation not permitted" at sun.nio.ch.Net.socket0 -- which
- *   said socket() is reachable and being refused. That is useful and it is not
- *   enough, because ArcNet is ALL NIO: Selector.open(), SocketChannel,
- *   DatagramChannel. A JVM that can open a socket but not a selector can connect
- *   and cannot run a server or the client's own event loop, and the difference
- *   decides whether this is a week of work or a rewrite of 37 classes. So the
- *   distinction has to be measured, not inferred from the one error the game
- *   happens to print.
+ * 为什么要一个 native 探测，而不只是盯着游戏看
+ *   游戏在这条路径上已经报过失败 —— "SocketException: Operation not permitted" 在
+ *   sun.nio.ch.Net.socket0 —— 那说明 socket() 可达且被拒。那有用，但还不够，因为 ArcNet 全是
+ *   NIO：Selector.open()、SocketChannel、DatagramChannel。一个能开 socket 却开不了 selector 的
+ *   JVM，能连接，却跑不了服务器、也跑不了客户端自己的事件循环，而这个差别决定了这是一周的工作，
+ *   还是重写 37 个类。所以这个区分必须被测量，而不是从游戏恰好打印的那一条错误里推断。
  *
- *   Doing it here rather than in Java also means it is independent of the JVM,
- *   of Arc, and of which feature happened to be tried first.
+ *   在这里做而不是在 Java 里做，也意味着它不依赖 JVM、不依赖 Arc，也不依赖哪个功能恰好被先试。
  *
- * EACH CALL IS REPORTED WITH ITS OWN ERRNO. A single "networking works: no" would
- * be the same mistake as the one this project keeps re-learning: the interesting
- * information is which link is broken.
+ * 每次调用都用它自己的 errno 报告。一句笼统的「联网：不行」会正是这个项目反复重学的那同一个错误：
+ * 有意思的信息是【哪一环】断了。
  *
- * connect() is attempted but not required to succeed -- it depends on the device
- * actually having a route, which is not what is being tested here. It is included
- * because "socket() succeeds and connect() says ENETUNREACH" and "connect() gets
- * a connection refused" are very different answers and only one of them means the
- * sandbox is the problem.
+ * connect() 会被尝试，但不要求成功 —— 它取决于设备是否真的有一条路由，而这不是这里要测的东西。
+ * 之所以包含它，是因为「socket() 成功而 connect() 报 ENETUNREACH」与「connect() 收到连接被拒」
+ * 是非常不同的答案，而其中只有一个意味着沙箱才是问题。
  *
- * WARNING: IT MUST NOT BE ALLOWED TO SLOW DOWN A LAUNCH. It runs before the JVM is
- * created, and name resolution can block for seconds on a network whose first
- * nameserver does not answer. The name/connect steps are therefore opt-in via
- * DEST_ROOT/netprobe; the syscall checks above them are local, instant, and
- * always on. See the note at the branch.
+ * 警告：绝不能让它拖慢一次启动。它在 JVM 被创建之前运行，而在一个首选 nameserver 不应答的网络上，
+ * 名字解析可能阻塞数秒。所以名字/连接这两步通过 DEST_ROOT/netprobe 选择加入；它们上方的 syscall
+ * 检查是本地的、瞬时的、始终开启的。见那处分支的说明。
  */
 static void probe_network(void)
 {
@@ -1869,29 +1706,26 @@ static void probe_network(void)
             udp >= 0 ? "OK" : "FAILED");
     if (udp < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
 
-    /* What EPollSelectorImpl is built on. Without it, Selector.open() fails and
-     * so does every ArcNet connection, including the ones that already have a
-     * working socket. */
+    /* [A] EPollSelectorImpl 就是架在这个之上的。没有它，Selector.open() 会失败，每一次
+     * ArcNet 连接也会失败，包括那些已经有可用 socket 的。 */
     int ep = epoll_create1(0);
     SDL_Log("   epoll_create1(0)             : %s",
             ep >= 0 ? "OK" : "FAILED");
     if (ep < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
 
-    /* Selector wakeup. A selector that cannot be woken is one that cannot be
-     * registered with from another thread. */
+    /* [A] Selector 唤醒。一个无法被唤醒的 selector，就是一个无法从另一个线程被注册的
+     * selector。 */
     int ev = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     SDL_Log("   eventfd(0, NONBLOCK|CLOEXEC) : %s",
             ev >= 0 ? "OK" : "FAILED");
     if (ev < 0) SDL_Log("        errno=%d (%s)", errno, strerror(errno));
 
-    /*
-     * Name resolution, in two steps, because "cannot resolve" and "cannot
-     * reach" are different problems with different fixes and one combined test
-     * cannot tell them apart.
+    /* [A]
+     * 名字解析，分两步，因为「无法解析」和「无法到达」是不同的问题、有不同的修法，而一个合并的
+     * 测试无法把它们区分开。
      *
-     * The numeric lookup needs no resolver at all: it either works, which says
-     * the resolver path is intact and only name lookup is failing, or it fails
-     * too, which says the call itself is blocked.
+     * 数字查找根本不需要 resolver：它要么成功，那就说明 resolver 这条路是完好的、只有名字查找
+     * 在失败，要么它也同样失败，那就说明调用本身被封锁了。
      */
     struct addrinfo hints;
     struct addrinfo *res = NULL;
@@ -1910,14 +1744,12 @@ static void probe_network(void)
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
 
-    /*
-     * Read the resolver's own configuration from THIS process.
+    /* [A]
+     * 从【这个】进程读取 resolver 自己的配置。
      *
-     * It was readable from an hdc shell -- 114.114.114.114 then 8.8.8.8 -- but a
-     * shell and an app are different security contexts, and the whole question
-     * here is whether this process can resolve names. Measuring it from the
-     * shell and calling it the app's answer is the mistake this project already
-     * has on record for `stat` on bundle paths.
+     * 它从 hdc shell 里可读 —— 先是 114.114.114.114 然后是 8.8.8.8 —— 但 shell 和应用是不同的
+     * 安全上下文，而这里的整个问题就是【这个】进程能不能解析名字。从 shell 里测量它、再把它当作
+     * 应用的答案，正是这个项目在 bundle 路径上的 `stat` 那里已经记录在案的那个错误。
      */
     {
         FILE *rc = fopen("/etc/resolv.conf", "r");
@@ -1940,31 +1772,24 @@ static void probe_network(void)
         }
     }
 
-    /*
-     * WARNING: THE NETWORK I/O BELOW IS OPT-IN, AND THAT IS NOT A STYLE CHOICE.
+    /* [A]
+     * 警告：下面的网络 I/O 是选择加入的，而这不是风格问题。
      *
-     * Everything above this line is a local kernel operation and returns
-     * immediately. Resolution and connection do not: `getaddrinfo` consults the
-     * nameservers in /etc/resolv.conf in order, and on a network where the first
-     * one is unreachable the call sits there until that resolver's timeout
-     * expires before trying the next. Connecting adds a TCP handshake on top.
+     * 这一行之上的每一样都是本地内核操作，会立即返回。解析和连接不是：`getaddrinfo` 按顺序询问
+     * /etc/resolv.conf 里的 nameserver，而在一个第一个就不可达的网络上，调用会卡在那里，直到那个
+     * resolver 的超时到期，才会去试下一个。连接还要在上面再加一次 TCP 握手。
      *
-     * This function runs BEFORE JNI_CreateJavaVM, so every millisecond spent
-     * here is a millisecond the player spends looking at a black window with
-     * nothing but the floating ball on it. Measured consequence, reported from
-     * the phone: the app opens to a black screen and takes a noticeable while
-     * before loading starts. On the tablet the same build was fine, because the
-     * resolver there answers.
+     * 这个函数在 JNI_CreateJavaVM 【之前】运行，所以在这里花掉的每一毫秒，都是玩家盯着一块除了
+     * 悬浮球以外什么都没有的黑窗口度过的毫秒。实测到的后果，从手机上报来的：应用打开后是黑屏，
+     * 而且过了一段明显的时间才开始加载。同样的构建在平板上没事，因为那里的 resolver 会应答。
      *
-     * A diagnostic that makes the thing it measures worse is not a diagnostic.
-     * So the fast checks run always, and the two that can block run only when
-     * this file exists:
+     * 一个让它所测量的东西变得更糟的诊断，不是诊断。所以那些快的检查始终运行，而那两个可能阻塞的
+     * 只在这个文件存在时才运行：
      *
      *     hdc shell "touch /data/storage/el2/base/files/netprobe"
      *
-     * Delete it and the next launch is fast again. This is the same shape as
-     * NOHANDLERS in jvm.options -- an opt-in switch for something that changes
-     * timing.
+     * 删掉它，下一次启动就又快了。这与 jvm.options 里的 NOHANDLERS 是同一种形式 —— 一个会改变
+     * 时序的东西，用一个选择加入的开关。
      */
     if (access(DEST_ROOT "/netprobe", F_OK) != 0) {
         SDL_Log("   (name resolution and connect skipped -- create %s to enable)",
@@ -1977,24 +1802,20 @@ static void probe_network(void)
     if (gai != 0) SDL_Log("        %s (EAI code %d)", gai_strerror(gai), gai);
     if (res) freeaddrinfo(res);
 
-    /*
-     * Reachability, by resolving a name and connecting to what came back.
+    /* [A]
+     * 可达性，通过解析一个名字、并连接它返回的东西来测。
      *
-     * Deliberately NOT a hardcoded address. An earlier revision connected to a
-     * literal IP that had been sampled from the device minutes earlier, which
-     * works exactly once: addresses move, and a probe that fails because a
-     * number is stale is worse than no probe. Resolving first is also what Java
-     * does, so this exercises the same two steps in the same order.
+     * 刻意【不是】一个硬编码地址。早先的一版连接到一个几分钟前从设备上采样到的字面 IP，那种做法
+     * 恰好只灵一次：地址会变，而一个因为数字过期而失败的探测，比没有探测还糟。先解析也正是 Java
+     * 所做的，所以这里以同样的顺序演练同样的两步。
      *
-     * A failure here is not automatically a sandbox problem. `getaddrinfo` above
-     * and `connect` here separate "cannot resolve" from "cannot reach", and
-     * neither distinguishes the sandbox from the network -- a device with no
-     * route fails both. What WOULD distinguish them is errno: EPERM or EACCES on
-     * socket() means refused by policy, which is what this probe is really for.
+     * 这里的失败不自动等于沙箱问题。上面的 `getaddrinfo` 和这里的 `connect` 把「无法解析」与
+     * 「无法到达」分开，而两者都不能把沙箱与网络区分开 —— 一台没有路由的设备两者都失败。真正能
+     * 区分它们的是 errno：socket() 上的 EPERM 或 EACCES 意味着被策略拒绝，而这才是这个探测真正
+     * 要查的东西。
      *
-     * Resolved ONCE. An earlier revision resolved the name here as well as
-     * above, which doubled the cost of the slowest step for nothing -- the
-     * address is the same both times.
+     * 只解析【一次】。早先的一版在此处和上面都解析了名字，白白让最慢那一步的代价翻倍 —— 两次拿到
+     * 的地址是一样的。
      */
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -2024,11 +1845,10 @@ done:
     SDL_Log(" --- end network syscalls ---");
 }
 
-/*
- * NOTE: an attempt to have SDL export a diagnostic getter for the launcher to
- * call did not link -- SDL's build restricts exports to its own symbol list, so
- * visibility("default") is not enough to add one. The surface-copy question is
- * answered from SDL's own log instead; see SDL_openharmonyvideo.c.
+/* [A]
+ * 注意：曾试图让 SDL 导出一个诊断 getter 供启动器调用，但没链接上 —— SDL 的构建把导出限制
+ * 在它自己的符号清单里，所以 visibility("default") 不足以加一个进去。surface 拷贝的问题改为
+ * 从 SDL 自己的日志里回答；见 SDL_openharmonyvideo.c。
  */
 
 static void report_shipped_files(void)
@@ -2044,8 +1864,8 @@ static void report_shipped_files(void)
     };
     SDL_Log(" --- shipped files ---");
     for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
-        /* stat() rather than fopen(): opening an 87 MB jar to answer "is it
-         * there" would be silly, and this is the same call the loader makes. */
+        /* [B] 用 stat() 而不是 fopen()：为了回答「它在不在」去打开一个 87 MB 的 jar 未免
+         * 荒唐，而这是 loader 所做的同一个调用。 */
         struct stat st;
         if (stat(paths[i], &st) == 0) {
             SDL_Log("   %9ld  %s", (long)st.st_size, paths[i]);
@@ -2056,21 +1876,19 @@ static void report_shipped_files(void)
     SDL_Log(" --- end shipped files ---");
 }
 
-/*
- * Build the directory java.home will be pointed at: <sandbox>/jdk/lib/modules as
- * a symlink to the shipped module image. See SANDBOX_JDK for why.
+/* [C]
+ * 构建 java.home 将被指向的那个目录：<sandbox>/jdk/lib/modules，作为指向所分发 module image
+ * 的符号链接。为什么见 SANDBOX_JDK。
  *
- * An existing link is removed first. Keeping it would be faster, but a stale link
- * pointing at a target that no longer exists is indistinguishable from a working
- * one until the module lookup fails, which is the failure this exists to avoid.
+ * 已存在的链接会先被移除。留着它会更快，但一条指向已不存在目标的陈旧链接，在模块查找失败之前与
+ * 一条能用的链接无从区分，而这正是它存在要避免的那种失败。
  */
-/*
- * Put one shipped file where java.home expects to find it, once.
+/* [A]
+ * 把一个所分发的文件放到 java.home 预期找到它的地方，只做一次。
  *
- * Written under a temporary name and renamed into place: a copy interrupted
- * halfway would otherwise leave a file that passes an existence check and fails
- * inside the JVM instead. Size is the whole "is it already there" test, because
- * the only way a file of the right size can be present is a completed rename.
+ * 以一个临时名字写入、再改名就位：一次中途被打断的拷贝，否则会留下一个能通过存在性检查、却在
+ * JVM 内部失败的文件。尺寸就是「它是否已经在那里」的整个测试，因为一个尺寸正确的文件之所以能
+ * 在场，唯一的方式就是一次已完成的改名。
  */
 static int materialise(const char *src, const char *dst)
 {
@@ -2132,7 +1950,7 @@ static int materialise(const char *src, const char *dst)
         unlink(tmp);
         return rc;
     }
-    /* rename() is the commit point -- see the note above. */
+    /* [B] rename() 是提交点 —— 见上面的说明。 */
     if (rename(tmp, dst) != 0) {
         SDL_Log(" !! rename %s: %s", tmp, strerror(errno));
         unlink(tmp);
@@ -2141,18 +1959,15 @@ static int materialise(const char *src, const char *dst)
     return 0;
 }
 
-/*
- * Copy a shipped tree into the sandbox, stripping one trailing ".so" from every
- * file name.
+/* [A]
+ * 把一棵所分发的目录树拷进沙箱，从每个文件名上剥掉一个结尾的 ".so"。
  *
- * See scripts/prep_jdkconf.py for why the names carry ".so": hvigor carries
- * *.so out of libs/ and drops everything else without a word. Measured.
+ * 名字为什么带 ".so" 见 scripts/prep_jdkconf.py：hvigor 会从 libs/ 里搬走 *.so，别的一言不发
+ * 地丢掉。实测。
  *
- * RECURSIVE ON PURPOSE. The alternative is a list of the files java.home needs,
- * and that list was complete until it was not -- twice, and the second time was
- * this one. Walking whatever the JDK ships cannot go stale when a feature
- * exercises another entry. Existing files of the right size are left alone by
- * materialise(), so this is cheap on every launch after the first.
+ * 刻意做成递归的。替代方案是一份 java.home 所需文件的清单，而那份清单在对的时候完全正确，直到
+ * 它不对为止 —— 有过两次，第二次就是这一次。遍历 JDK 实际分发的东西，不会因为某个功能用到另一个
+ * 条目而过时。尺寸正确的既有文件会被 materialise() 放过，所以从第二次启动起，这很便宜。
  */
 static int copy_tree_strip_so(const char *src, const char *dst)
 {
@@ -2188,9 +2003,8 @@ static int copy_tree_strip_so(const char *src, const char *dst)
             continue;
         }
 
-        /* Exactly one trailing ".so" -- the one hvigor needed to see. A source
-         * name that genuinely ends in .so would be shipped as .so.so and comes
-         * back out whole, so this strip is always symmetric. */
+        /* [A] 恰好一个结尾的 ".so" —— 就是 hvigor 需要看到的那个。一个真正以 .so 结尾的源
+         * 名字会被作为 .so.so 分发，并原封不动地出来，所以这个剥离永远是对称的。 */
         size_t n = strlen(e->d_name);
         size_t keep = (n > 3 && strcmp(e->d_name + n - 3, ".so") == 0) ? n - 3 : n;
         if (keep == 0) continue;
@@ -2211,28 +2025,23 @@ static int copy_tree_strip_so(const char *src, const char *dst)
     return rc;
 }
 
-/*
- * Build the directory java.home will be pointed at.
+/* [A]
+ * 构建 java.home 将被指向的那个目录。
  *
- * The module image and the time-zone database have to be there under the names
- * java.base looks for:
- *   lib/modules    the module image. Shipped as jimg.so (patch_libjvm.py) because
- *                  hvigor only carries names ending in ".so"; java.base builds
- *                  the name "modules" itself and will not accept anything else.
- *   lib/tzdb.dat   the time-zone database. Shipped as tzdb.so (prep_jdklib.py)
- *                  for the same reason. Missing, it does not merely spoil
- *                  timestamps -- sun.util.calendar.ZoneInfoFile fails to
- *                  initialise, and the first DateFormat request anywhere in the
- *                  program throws. Mindustry asks for one in Saves.<clinit>.
+ * module image 和时区数据库必须以 java.base 所要找的名字待在那里：
+ *   lib/modules    module image。以 jimg.so 分发（patch_libjvm.py），因为 hvigor 只搬运
+ *                  以 ".so" 结尾的名字；java.base 自己拼出 "modules" 这个名字，不接受别的。
+ *   lib/tzdb.dat   时区数据库。出于同样的原因以 tzdb.so 分发（prep_jdklib.py）。缺失时，它
+ *                  不只是破坏时间戳 —— sun.util.calendar.ZoneInfoFile 初始化失败，而程序里
+ *                  任何地方第一次请求 DateFormat 都会抛异常。Mindustry 在 Saves.<clinit> 里
+ *                  就会请求一次。
  *
- * And JDK_HOME_TREE puts the rest of what the JDK reads relative to java.home
- * in place -- see the note on that macro for the failure that made it necessary.
+ * 而 JDK_HOME_TREE 把 JDK 相对 java.home 读取的其余东西放到位 —— 这个必要性的来由见那个宏上的
+ * 说明。
  *
- * THE RETURN VALUE MEANS ONE THING: is lib/modules in place? That is what
- * decides whether java.home can be redirected at all (see the caller). The rest
- * is reported loudly but deliberately does NOT change it -- folding a missing
- * text file into this would make "the module image is not in place" show up for
- * a cause that is not that, which is a worse error than no error.
+ * 返回值只意味着一件事：lib/modules 到位了吗？这才是决定 java.home 到底能不能被重定向的东西
+ * （见调用方）。其余部分会被大声报告，但刻意【不】改变它 —— 把一个缺失的文本文件折进来，会让
+ * 「module image 未到位」以一个并非如此的原因冒出来，那是一个比没有错误更糟的错误。
  */
 static int prepare_java_home(void)
 {
@@ -2257,15 +2066,13 @@ static int prepare_java_home(void)
     return 0;
 }
 
-/*
- * Rewrite java.home from inside the VM, before anything reads it.
+/* [A]
+ * 从 VM 内部重写 java.home，在任何东西读它之前。
  *
- * This is not belt-and-braces: the value HotSpot derived points at the bundle,
- * where the module image is called jimg.so, and java.base insists on "modules".
- * The window is real and wide -- ImageReaderFactory is a lazily initialised
- * class, and the first thing that touches it in this program is the game's own
- * resource lookup -- so doing it here, immediately after the VM exists, is in
- * time. Anything later would not be.
+ * 这不是多此一举：HotSpot 推导出的值指向 bundle，而那里的 module image 叫 jimg.so，java.base
+ * 却坚持要 "modules"。这个窗口真实且很宽 —— ImageReaderFactory 是一个惰性初始化的类，而这个
+ * 程序里第一个碰它的东西就是游戏自己的资源查找 —— 所以在这里做、在 VM 存在之后立刻做，是来得及
+ * 的。任何更晚的做法都来不及。
  */
 static void override_java_home(JNIEnv *env)
 {
@@ -2296,16 +2103,13 @@ static void override_java_home(JNIEnv *env)
     }
 }
 
-/*
- * Load Arc's natives from the bundle and mark them loaded, so Arc's own loader
- * has nothing left to do. See ARC_LIBS for why they cannot be loaded the way Arc
- * intends to load them.
+/* [A]
+ * 从 bundle 加载 Arc 的 natives 并把它们标记为已加载，好让 Arc 自己的 loader 无事可做。为什么
+ * 不能按 Arc 打算的方式来加载它们，见 ARC_LIBS。
  *
- * Best-effort by design: a native that will not load is reported and skipped
- * rather than aborting the launch, because the game's own error for a missing
- * native names the library and the caller, and that is more useful than a
- * failure here. What must not happen is a half-state -- so a library is marked
- * loaded ONLY after System.load has actually returned without an exception.
+ * 设计上就是尽力而为：一个加载不了的 native 会被报告并跳过，而不是中止这次启动，因为游戏自己
+ * 针对缺失 native 的错误会点名那个库和调用者，那比在这里失败更有用。绝不能发生的是半状态 ——
+ * 所以一个库只有【在】System.load 真的无异常返回【之后】才被标记为已加载。
  */
 static void preload_arc_natives(JNIEnv *env)
 {
@@ -2315,11 +2119,9 @@ static void preload_arc_natives(JNIEnv *env)
                                    "libarc-filedialogsarm64.so" };
     const unsigned N = sizeof(keys) / sizeof(keys[0]);
 
-    /*
-     * Everything goes through our own class rather than System.load directly.
-     * Calling System.load from here registers the library against the wrong
-     * class loader and the game then cannot find its native methods even though
-     * the load reported success -- see NativeLoader.java.
+    /* [A]
+     * 一切都走我们自己的类，而不是直接走 System.load。从这里调用 System.load 会把库注册到错误的
+     * 类加载器上，游戏随后就找不到它的 native 方法，即使那次加载报告成功 —— 见 NativeLoader.java。
      */
     jclass helper = (*env)->FindClass(env, "com/haohandc/launcher/NativeLoader");
     if (!helper) {
@@ -2354,7 +2156,7 @@ static void preload_arc_natives(JNIEnv *env)
             SDL_Log("   %-30s LOAD FAILED", files[i]);
             (*env)->ExceptionDescribe(env);
             (*env)->ExceptionClear(env);
-            continue;                    /* deliberately not marked */
+            continue;                    /* [B] 刻意不标记 */
         }
 
         (*env)->CallStaticVoidMethod(env, helper, markm,
@@ -2370,25 +2172,21 @@ static void preload_arc_natives(JNIEnv *env)
     SDL_Log(" --- end Arc natives ---");
 }
 
-/*
- * Step 4 of the blueprint: reflectively call the game's entry point.
+/* [A]
+ * 蓝图第 4 步：以反射方式调用游戏的入口点。
  *
- * WHAT COUNTS AS PASSING
- *   The blueprint's acceptance line for this step is "Mindustry starts -- even
- *   with no picture on screen". So the pass condition is that the GAME'S OWN
- *   code runs, which is observable as its own output on stdout. A window is
- *   explicitly NOT part of this step (that is step 5), so an SDL or GL failure
- *   after main() has begun still counts as "it started" and is reported as a
- *   distinct outcome rather than as a failure of this step.
+ * 什么算通过
+ *   蓝图对这一步的验收线是「Mindustry 启动了 —— 即使屏幕上没有画面」。所以通过条件是【游戏
+ *   自己的】代码运行了，这可以观测为它自己在 stdout 上的输出。窗口明确【不】属于这一步（那是
+ *   第 5 步），所以 main() 开始之后的一次 SDL 或 GL 失败，仍算作「它启动了」，并作为一个独立的
+ *   结果报告，而不是作为这一步的失败。
  *
- * WHY REFLECTIVE, AND WHY HERE
- *   The entry point is invoked through JNI rather than by handing a main class
- *   to the launcher, because there is no launcher: this is the launcher. Starting
- *   the VM and then calling main ourselves is the whole design.
+ * 为什么用反射，以及为什么在这里
+ *   入口点是经由 JNI 被调用的，而不是把一个 main class 交给启动器，因为没有启动器：这个就是
+ *   启动器。启动 VM 然后我们自己调用 main，就是整个设计。
  *
- *   The call is made on this thread -- the one SDL created for SDL_main -- and it
- *   blocks until the game returns. That is intended: a game's main() runs its own
- *   loop and returns at exit.
+ *   调用发生在这个线程上 —— SDL 为 SDL_main 创建的那个 —— 并且它会阻塞到游戏返回。这是有意
+ *   的：一个游戏的 main() 跑它自己的循环，在退出时才返回。
  */
 static int launch_game(JNIEnv *env)
 {
@@ -2416,7 +2214,7 @@ static int launch_game(JNIEnv *env)
         return 2;
     }
 
-    /* an empty String[] -- the game supplies its own defaults */
+    /* [B] 一个空的 String[] —— 游戏自己提供它的默认值 */
     jclass strcls = (*env)->FindClass(env, "java/lang/String");
     jobjectArray argv = (*env)->NewObjectArray(env, 0, strcls, NULL);
     if (!argv) {
@@ -2427,9 +2225,8 @@ static int launch_game(JNIEnv *env)
     SDL_Log("   -> calling %s.main(new String[0]) ...", MAIN_CLASS);
     (*env)->CallStaticVoidMethod(env, cls, mid, argv);
 
-    /* Reaching this line means main() returned. For a game that is either a
-     * clean exit or a failure inside startup -- an exception still pending here
-     * tells the two apart, so report it rather than assuming either way. */
+    /* [B] 走到这一行意味着 main() 返回了。对游戏而言那要么是一次干净退出，要么是启动内部的一次
+     * 失败 —— 此处仍有未决异常能把两者区分开，所以把它报告出来，而不是两边都靠猜。 */
     if ((*env)->ExceptionCheck(env)) {
         SDL_Log(" !! the game threw while starting up:");
         (*env)->ExceptionDescribe(env);
@@ -2456,24 +2253,20 @@ static int start_jvm(void)
     char libjvm[1400];
     SDL_snprintf(libjvm, sizeof(libjvm), "%s", g_anchor);
 
-    /*
-     * RTLD_LAZY, deliberately -- not as a fallback after RTLD_NOW fails.
+    /* [A]
+     * 刻意用 RTLD_LAZY —— 不是作为 RTLD_NOW 失败后的回退。
      *
-     * libjvm.so declares __cxa_thread_atexit as a STRONG undefined symbol
-     * (GLOBAL, not WEAK -- readelf --dyn-syms), and NOTHING on this platform
-     * provides it: the JDK's own libcxxabi_shim.so does not export it, and neither
-     * does OHOS libc. So RTLD_NOW cannot ever succeed here.
+     * libjvm.so 把 __cxa_thread_atexit 声明为一个【强】未定义符号（GLOBAL，不是 WEAK ——
+     * readelf --dyn-syms），而这个平台上【没有任何东西】提供它：JDK 自己的 libcxxabi_shim.so
+     * 不导出它，OHOS libc 也不导出。所以 RTLD_NOW 在这里永远不可能成功。
      *
-     * Lazy binding sidesteps it: function relocations are resolved at first call,
-     * so the load succeeds and the symbol only matters if it is actually used.
-     * That is also how the library is meant to be loaded -- libjvm.so carries no
-     * DF_BIND_NOW flag, so lazy binding is its normal mode.
+     * 懒绑定绕过了它：函数重定位在首次调用时才解析，所以加载成功，而那个符号只在真的被用到时
+     * 才要紧。这也正是这个库本该被加载的方式 —— libjvm.so 不带 DF_BIND_NOW flag，所以懒绑定是
+     * 它的正常模式。
      *
-     * Evidence this is the right call: AMCL, which runs on this device with the
-     * SAME libjvm.so and the UNMODIFIED shim, must be resolving it the same way.
-     * Our previous workaround -- a hand-written shim that supplied
-     * __cxa_thread_atexit -- is gone, and removing it changed nothing about the
-     * failure, which is exactly what a red herring should do.
+     * 支持这是正确选择的证据：AMCL 在本设备上跑着【同一个】libjvm.so 和【未修改的】shim，它必然
+     * 也是以同样方式解析的。我们先前的变通做法 —— 一个手工编写、提供 __cxa_thread_atexit 的
+     * shim —— 已经没了，而移除它并没有改变失败的任何方面，正是一条误导线索该有的表现。
      */
     SDL_Log(" dlopen(%s)", libjvm);
     void *h = dlopen(libjvm, RTLD_LAZY | RTLD_GLOBAL);
@@ -2493,180 +2286,146 @@ static int start_jvm(void)
     }
     SDL_Log("   -> JNI_CreateJavaVM = %p", (void *)create);
 
-    /*
-     * The class path is the game plus LWJGL. LWJGL is not optional here: the
-     * game's own backend classes cannot be linked without org.lwjgl.*, so a
-     * failure to find them shows up while loading the application, not while
-     * loading the game's main class.
+    /* [A]
+     * class path 是游戏加 LWJGL。LWJGL 在这里不是可选项：游戏自己的后端类，没有 org.lwjgl.*
+     * 就无法链接，所以找不到它们会在加载 application 的时候暴露出来，而不是在加载游戏 main class
+     * 的时候。
      */
     SDL_snprintf(opt_classpath, sizeof(opt_classpath),
                  "-Djava.class.path=%s:%s/lwjgl.so:%s/lwjgl-opengl.so:%s/lwjgl-sdl.so:%s",
                  GAME_JAR, LWJGL_JARS, LWJGL_JARS, LWJGL_JARS, HELPER_JAR);
-    /*
-     * The bundle library directory comes FIRST, and that ordering is the whole
-     * point.
+    /* [A]
+     * bundle 库目录放在【最前】，而这个顺序正是关键。
      *
-     * There are two copies of libSDL3.so in the bundle: this launcher's own, at
-     * the top level, and LWJGL's, in LWJGL_LIBS. The ArkTS XComponent names
-     * "SDL3" when it is created, which loads the top-level one and hands it the
-     * native window; the game reaches SDL through LWJGL, which would load the
-     * other one. Each copy keeps its own globals, so the copy that creates the
-     * window is not the copy that was given the window, and window creation
-     * fails with
+     * bundle 里有两份 libSDL3.so：本启动器自己的那份在顶层，LWJGL 的那份在 LWJGL_LIBS 里。
+     * ArkTS 的 XComponent 在被创建时报出 "SDL3"，这会加载顶层那份并把 native 窗口交给它；而
+     * 游戏通过 LWJGL 到达 SDL，那会加载另一份。每份副本各保留自己的全局量，于是创建窗口的那份
+     * 副本，并不是被赋予窗口的那份副本，窗口创建以
      *
      *     OpenHarmony host has no ready NativeWindow lease
      *
-     * -- a message that exists in LWJGL's build and not in the launcher's, which
-     * is how the two were told apart.
+     * 失败 —— 这条消息存在于 LWJGL 的构建里、而不在启动器的构建里，两者就是这样区分开的。
      *
-     * Listing the bundle first makes LWJGL find the launcher's copy, so there is
-     * one instance and it is the one holding the window. The launcher's copy
-     * still provides liblwjgl.so and liblwjgl_opengl.so from LWJGL_LIBS.
+     * 把 bundle 列在最前，让 LWJGL 找到启动器的那份副本，于是只有一个实例，而且正是持有窗口的
+     * 那一个。启动器的副本仍然从 LWJGL_LIBS 提供 liblwjgl.so 和 liblwjgl_opengl.so。
      */
     SDL_snprintf(opt_lwjglpath, sizeof(opt_lwjglpath),
                  "-Dorg.lwjgl.librarypath=%s:%s", BUNDLE_LIBS, LWJGL_LIBS);
-    /*
-     * java.home points at the SANDBOX copy, not at the bundle, and it has to be
-     * right from the moment the VM is created.
+    /* [A]
+     * java.home 指向【沙箱】里的那份拷贝，而不是 bundle，而且它从 VM 被创建的那一刻起就必须正确。
      *
-     * Two files java.base opens by name cannot travel in the bundle: hvigor
-     * carries only names ending in ".so", so the module image ships as jimg.so
-     * and the time-zone database as tzdb.so. They are copied into
-     * <sandbox>/jdk/lib/ under the names java.base actually builds --
-     * "modules" and "tzdb.dat" -- and java.home is aimed there.
+     * 有两个 java.base 按名字打开的文件无法随 bundle 旅行：hvigor 只搬运以 ".so" 结尾的名字，
+     * 所以 module image 以 jimg.so 分发、时区数据库以 tzdb.so 分发。它们被拷进 <sandbox>/jdk/lib/
+     * 下、以 java.base 真正拼出的名字 —— "modules" 和 "tzdb.dat" —— 而 java.home 就瞄向那里。
      *
-     * Correcting java.home from Java, after the VM is up, is NOT enough, and
-     * that was measured rather than assumed: sun.util.calendar.ZoneInfoFile kept
-     * reading "<bundle>/jdk21/lib/tzdb.dat" and threw FileNotFoundException even
-     * though System.setProperty had already succeeded and read back the new
-     * value. The JDK caches this property in static finals initialised during VM
-     * startup, so a value changed afterwards is invisible to them.
+     * 从 Java 侧、在 VM 起来之后再去纠正 java.home 【不】够，这是实测而非假设的：
+     * sun.util.calendar.ZoneInfoFile 一直去读 "<bundle>/jdk21/lib/tzdb.dat"，并抛出
+     * FileNotFoundException，即使 System.setProperty 已经成功、并且读回了新值。JDK 把这个属性
+     * 缓存在 VM 启动期间初始化的 static final 里，所以之后改的值对它们不可见。
      *
-     * NOTE for the record: the earlier conclusion that HotSpot overwrites
-     * -Djava.home was drawn from runs where the value passed was the same one
-     * HotSpot would derive, so the two were indistinguishable. This is the first
-     * run that can actually tell them apart.
+     * 备此一说：早先「HotSpot 会覆盖 -Djava.home」那个结论，是从「所传的值恰好与 HotSpot 会推导
+     * 出的值相同」的那些运行里得出的，所以两者无从区分。这是第一次能真正把它们区分开的运行。
      */
     SDL_snprintf(opt_home,      sizeof(opt_home),      "-Djava.home=%s", SANDBOX_JDK);
     SDL_snprintf(opt_tmpdir,    sizeof(opt_tmpdir),    "-Djava.io.tmpdir=%s", TMP_DIR);
     SDL_snprintf(opt_libpath,   sizeof(opt_libpath),   "-Djava.library.path=%s/server:%s", g_jdklib, g_jdklib);
     SDL_strlcpy(opt_encoding,   "-Dfile.encoding=UTF-8", sizeof(opt_encoding));
     SDL_strlcpy(opt_headless,   "-Djava.awt.headless=true", sizeof(opt_headless));
-    /* the JVM looks for libjava.so & friends here, not in java.home/lib */
+    /* [A] JVM 在这里找 libjava.so 及其同类，而不是在 java.home/lib 里 */
     SDL_snprintf(opt_bootlib,   sizeof(opt_bootlib), "-Dsun.boot.library.path=%s:%s/server", g_jdklib, g_jdklib);
-    /* make the JVM put its crash report somewhere we can read it via hdc */
+    /* [B] 让 JVM 把它的崩溃报告放到我们能通过 hdc 读到的地方 */
     SDL_snprintf(opt_errfile,   sizeof(opt_errfile), "-XX:ErrorFile=%s/hs_err_%%p.log", DEST_ROOT);
     SDL_strlcpy(opt_heap,       "-Xmx512m", sizeof(opt_heap));
 
-    /*
-     * ---------- THE TWO OPTIONS THAT MAKE OR BREAK THIS LAUNCHER ----------
+    /* [A]
+     * ---------- 决定这个启动器成败的两个选项 ----------
      *
-     * -XX:UseSVE=0  disables the ARM Scalable Vector Extension in the JIT.
+     * -XX:UseSVE=0  在 JIT 中禁用 ARM Scalable Vector Extension。
      *
-     * Without it the JVM dies during JNI_CreateJavaVM with SIGILL, deterministically,
-     * at the same address in the interpreter's native-method entry codelet. Measured
-     * here as a clean alternating A/B, five rounds: baseline crashed 5/5 at
-     * 0x5edf41fc68, UseSVE=0 succeeded 5/5. With the flag the whole startup path
-     * completes and Java code runs:
+     * 没有它，JVM 会在 JNI_CreateJavaVM 期间以 SIGILL 死掉，确定性地，在解释器的
+     * native-method entry codelet 里的同一个地址上。这里实测为一次干净的交替 A/B，五轮：
+     * 基线在 0x5edf41fc68 处 5/5 崩溃，UseSVE=0 则 5/5 成功。有该 flag 时整条启动路径跑完，
+     * Java 代码得以运行：
      *     JNI_CreateJavaVM returned 0 / *** JVM CREATED ***
-     *     currentTimeMillis, availableProcessors, maxMemory all read back
+     *     currentTimeMillis、availableProcessors、maxMemory 都读回成功
      *     stdout: *** HELLO FROM THE JVM ***
      *
-     * The precise reason SVE cannot be used is not established by this measurement:
-     * what IS established is that the CPU faults on code the JIT generated while
-     * believing SVE was available, and that turning SVE off makes the JIT emit code
-     * that runs. The strongest external corroboration is AMCL -- the launcher that
-     * demonstrably runs a JVM on this same device, with the same libjvm.so -- which
-     * passes -XX:UseSVE=0 among its options. Its source is not available, but its
-     * option list is, and this flag is in it.
+     * SVE 不能用的确切原因并没有被这次测量确立：被确立的是，CPU 在 JIT 于「相信 SVE 可用」时
+     * 生成的代码上陷入陷阱，而关掉 SVE 会让 JIT 发出能运行的代码。最强的外部佐证是 AMCL ——
+     * 那个明显能在同一设备、用同一个 libjvm.so 跑起一个 JVM 的启动器 —— 它的选项里就传了
+     * -XX:UseSVE=0。它的源码拿不到，但它的选项清单拿得到，而这个 flag 就在里面。
      *
-     * -XX:+UnlockDiagnosticVMOptions is required first: UseSVE is a diagnostic flag
-     * and is rejected outright without it.
+     * 必须先有 -XX:+UnlockDiagnosticVMOptions：UseSVE 是一个诊断 flag，没有它会直接被拒。
      *
-     * These are not tuning knobs. They are the difference between a JVM that starts
-     * and one that dies, so they live here as defaults rather than in the runtime
-     * options file.
+     * 这些不是调参旋钮。它们是一个能启动的 JVM 与一个会死掉的 JVM 之间的差别，所以它们作为默认值
+     * 待在这里，而不是放在运行时选项文件里。
      */
     SDL_strlcpy(opt_unsve,  "-XX:+UnlockDiagnosticVMOptions", sizeof(opt_unsve));
     SDL_strlcpy(opt_sve,    "-XX:UseSVE=0", sizeof(opt_sve));
 
-    /* the three platform properties -- see the declaration for why */
+    /* [B] 那三个平台属性 —— 为什么见声明处 */
     SDL_strlcpy(opt_osname,   "-Dos.name=Linux", sizeof(opt_osname));
     SDL_snprintf(opt_userhome, sizeof(opt_userhome), "-Duser.home=%s", DEST_ROOT);
     SDL_snprintf(opt_userdir,  sizeof(opt_userdir),  "-Duser.dir=%s",  DEST_ROOT);
     SDL_strlcpy(opt_gles, "-Darc.sdl.glEs=true", sizeof(opt_gles));
-    /* Ask the file, not a constant: the player may have switched to the desktop
-     * control scheme since the last launch. See read_control_mode_mobile(). */
+    /* [B] 去问那个文件，而不是用常量：玩家可能自上次启动以来已切到桌面操作方案。
+     * 见 read_control_mode_mobile()。 */
     SDL_snprintf(opt_mobile, sizeof(opt_mobile), "-Darc.sdl.mobile=%s",
                  read_control_mode_mobile() ? "true" : "false");
 
     {
-        /* Read the platform's own answer rather than guessing a path.
+        /* [A] 读平台自己的答案，而不是猜一个路径。
          *
-         * WHEN THERE IS NO ANSWER THE OPTION IS LEFT OUT ENTIRELY, and that is a
-         * correction, not a detail.
+         * 没有答案时，这个选项被完全略去，而这是一处纠正，不是一个细节。
          *
-         * This branch used to pass the empty literal "-Darc.sdl.chooserPath=",
-         * under a comment claiming an empty result "leaves the property unset".
-         * It does not. The property is SET, to "", and
+         * 这个分支过去会传空字面量 "-Darc.sdl.chooserPath="，底下一条注释声称空结果「使该属性
+         * 保持未设置」。它并没有。该属性被【设置】成了 ""，而
          *
          *     SdlFiles.chooserPath = System.getProperty("arc.sdl.chooserPath", externalPath)
          *
-         * only falls back to externalPath when the property is ABSENT. So an
-         * empty value is a decision, not a no-op -- and it is the wrong one. The
-         * note earlier in this file on read_user_dir() already said so: an empty
-         * chooserPath makes the game's file browser open at the filesystem root,
-         * "which is worse than not trying". The two comments disagreed and the
-         * code followed the wrong one.
+         * 只在属性【不存在】时才回退到 externalPath。所以空值是一个决定，不是一个空操作 ——
+         * 而且是一个错误的决定。本文件早先关于 read_user_dir() 的说明已经讲了：空的 chooserPath
+         * 会让游戏的文件浏览器打开在文件系统根，「那比干脆不试还糟」。两条注释互相矛盾，而代码
+         * 跟了错的那一条。
          *
-         * Left out, chooserPath falls back to externalPath, which SdlFiles
-         * computes as user.home + separator -- and this launcher points user.home
-         * at its own sandbox. So the browser opens where the player's mods,
-         * saves, schematics and maps actually are. That is a usable browser.
+         * 略去之后，chooserPath 回退到 externalPath，而 SdlFiles 把它算作 user.home + 分隔符
+         * —— 而本启动器把 user.home 指向自己的沙箱。于是浏览器打开在玩家的 mods、saves、
+         * schematics 和 maps 实际所在之处。那才是一个能用的浏览器。
          *
-         * Measured consequence of the old behaviour: on a device where ArkTS
-         * cannot report a Download directory (see probe_user_dirs), the game's
-         * browser opened nowhere useful instead of in the sandbox. */
+         * 旧行为实测到的后果：在一台 ArkTS 无法报告 Download 目录的设备上（见 probe_user_dirs），
+         * 游戏的浏览器打开在某个毫无用处的地方，而不是沙箱里。 */
         char dl[512];
-        /*
-         * The app's own folder, and NOTHING ELSE.
+        /* [A]
+         * 应用自己的文件夹，别的【什么都不要】。
          *
-         * A fallback to the plain platform Download directory used to sit here,
-         * for launches where the app's folder did not exist yet. Measured, it
-         * made those launches WORSE rather than better -- the probe above reports
-         * that directory as
+         * 这里曾经有一个对普通平台 Download 目录的回退，用于应用那个文件夹还不存在的启动。实测
+         * 它让那些启动变得【更糟】而不是更好 —— 上面的探测把那个目录报告为
          *
          *     download  NOT READABLE  errno=1 (Operation not permitted)
          *
-         * so pointing the browser at it opens on a directory this app cannot
-         * list: an empty browser, which reads as a broken feature. Leaving
-         * chooserPath UNSET is both honest and strictly better -- the browser
-         * then opens in the sandbox, where mods/, saves/ and schematics/ are,
-         * which is at least somewhere this app can read.
+         * 所以把浏览器指向它，会打开在一个本应用无法列出的目录上：一个空浏览器，读起来像是一个
+         * 坏掉的功能。让 chooserPath 保持【未设置】既诚实、又严格更好 —— 浏览器于是打开在沙箱里，
+         * 也就是 mods/、saves/ 和 schematics/ 所在的地方，那至少是本应用读得到的地方。
          *
-         * NOTE: the folder can legitimately be missing on exactly ONE launch -- the
-         * first after an install or an uninstall. It is created from the page,
-         * because the DOWNLOAD-mode picker needs a window (measured: 13900042
-         * from onCreate), and this code runs earlier than that. The page
-         * re-writes the bridge as soon as it has the folder, so most of those
-         * launches are correct too; and from the second launch on it always is.
+         * 注意：这个文件夹恰好只可能在【一次】启动中合法地缺失 —— 安装或卸载之后的第一次。它由
+         * 页面创建，因为 DOWNLOAD 模式的选取器需要一个窗口（实测：来自 onCreate 的 13900042），
+         * 而这段代码跑得比那更早。页面一拿到那个文件夹就会重写这座桥，所以那些启动里的多数也是对
+         * 的；而从第二次启动起，它总是对的。
          *
-         * Do not re-add the fallback. "No usable directory" and "a directory
-         * that cannot be read" are different answers, and only one of them is
-         * true here.
+         * 不要再把回退加回来。「没有可用的目录」和「一个读不了的目录」是不同的答案，而在这里只有
+         * 其中一个是真的。
          */
         if (read_user_dir("mods", dl, sizeof(dl)) > 0) {
             SDL_snprintf(opt_chooser, sizeof(opt_chooser), "-Darc.sdl.chooserPath=%s", dl);
             SDL_Log(" file browser will open at the mod folder: %s", dl);
         } else {
-            opt_chooser[0] = '\0';       /* empty means UNSET -- see option_slot() */
+            opt_chooser[0] = '\0';       /* [C] 空意味着未设置 —— 见 option_slot() */
             SDL_Log(" no mod folder in the bridge yet -- the browser will open in the");
             SDL_Log(" sandbox instead (where mods/ and saves/ are)");
         }
     }
 
-    /* BASE_OPTS counts the entries filled in below; the extras are appended
-     * after them, so keep the two in step. */
+    /* [A] BASE_OPTS 计的是下面填进去的条目数；额外的条目追加在它们之后，所以让两者保持同步。 */
     JavaVMOption options[BASE_OPTS + MAX_EXTRA_OPTS];
     options[0].optionString = opt_classpath; options[0].extraInfo = NULL;
     options[1].optionString = opt_home;      options[1].extraInfo = NULL;
@@ -2685,33 +2444,28 @@ static int start_jvm(void)
     options[14].optionString = opt_lwjglpath; options[14].extraInfo = NULL;
     options[15].optionString = opt_gles;      options[15].extraInfo = NULL;
     options[16].optionString = opt_mobile;    options[16].extraInfo = NULL;
-    /* A built option that came out EMPTY means "do not pass this one", and it is
-     * expressed as NULL so the compaction below can drop it. Passing the empty
-     * string would set the property, which is not the same thing -- see the note
-     * on opt_chooser. */
+    /* [A] 一个构造出来为【空】的选项意味着「这一个别传」，它被表达为 NULL，好让下面的压缩把它
+     * 丢掉。传空字符串会设置该属性，那不是同一回事 —— 见 opt_chooser 上的说明。 */
     options[17].optionString = (opt_chooser[0] != '\0') ? opt_chooser : NULL;
     options[17].extraInfo = NULL;
 
-    /*
-     * MINIMAL MODE -- a one-line switch in the runtime options file.
+    /* [C]
+     * 最小模式 —— 运行时选项文件里的一行开关。
      *
-     * Several of the nine built-in -D flags tell HotSpot things it normally works
-     * out for itself (java.home, sun.boot.library.path, java.library.path). They
-     * were added to get the JDK's libraries found from a non-standard location,
-     * but supplying them is itself a deviation from how a normal launcher starts
-     * a VM -- and the one configuration we know works on this device (AMCL) sets
-     * most of its properties AFTER the VM is up, via System.setProperty, not as
-     * creation options.
+     * 那九个内置 -D flag 里有几个告诉 HotSpot 一些它本来自己会算出来的东西（java.home、
+     * sun.boot.library.path、java.library.path）。加它们是为了让 JDK 的库能从一个非标准位置被
+     * 找到，但提供它们本身就是对「一个正常启动器如何启动 VM」的一种偏离 —— 而我们已知在本设备上
+     * 可行的那一个配置（AMCL），是在 VM 起来【之后】才经由 System.setProperty 设置它大多数属性
+     * 的，不是作为创建选项。
      *
-     * So this mode passes almost nothing and lets the VM do its own derivation.
-     * If the crash changes, our option list is implicated. If it does not, the
-     * options are exonerated and the difference is elsewhere.
+     * 所以这个模式几乎什么都不传，让 VM 自己做推导。如果崩溃变了，那我们的选项清单就有嫌疑。如果
+     * 没变，选项就被洗清，差别在别处。
      *
-     * Trigger: a line reading exactly  MINIMAL  in jvm.options.
+     * 触发条件：jvm.options 里一行恰好写着  MINIMAL。
      */
     int nExtra = 0;
     {
-        /* read the extras once, into the tail of the array */
+        /* [B] 一次性读进额外的选项，放到数组尾部 */
         nExtra = load_extra_options(options, BASE_OPTS);
     }
 
@@ -2719,56 +2473,48 @@ static int start_jvm(void)
     int force_noexec = 0;
     int w = BASE_OPTS;
     for (int i = BASE_OPTS; i < BASE_OPTS + nExtra; i++) {
-        /* ArkTS prefixes every launch-parameter value with '-', so markers
-         * arrive as either NAME or -NAME depending on how they were sent.
-         * They are consumed here and never reach the JVM -- an unknown option
-         * makes strict mode refuse the whole list, which is how this was found. */
+        /* [A] ArkTS 给每个启动参数值都加上 '-' 前缀，所以标记到达时可能是 NAME、也可能是
+         * -NAME，取决于它们是怎么被发送的。它们在这里被消费掉，绝不到达 JVM —— 一个未知选项会让
+         * 严格模式拒掉整份清单，这就是发现这点的原因。 */
         const char *o = options[i].optionString;
         if (SDL_strcmp(o, "MINIMAL") == 0 || SDL_strcmp(o, "-MINIMAL") == 0) {
             minimal = 1;
             continue;
         }
         if (SDL_strcmp(o, "NOHANDLERS") == 0 || SDL_strcmp(o, "-NOHANDLERS") == 0) {
-            continue;                    /* already acted on in main() */
+            continue;                    /* [B] 已在 main() 里处理过 */
         }
-        /* CLEAROPT exists only to make the ArkTS side rewrite jvm.options; its
-         * presence means "no options this run", so it is consumed and dropped.
-         * Without it, a run with no options keeps the PREVIOUS run's file and
-         * silently inherits its flags. */
+        /* [A] CLEAROPT 的存在只是为了让 ArkTS 侧重写 jvm.options；它的出现意味着「本次运行没有
+         * 选项」，所以它被消费并丢弃。没有它，一次不带选项的运行会保留【上一次】运行的文件，
+         * 从而静默地继承它的 flag。 */
         if (SDL_strcmp(o, "CLEAROPT") == 0 || SDL_strcmp(o, "-CLEAROPT") == 0) {
             continue;
         }
-        /* NOGAME is acted on after the VM is up, not here; it is consumed only
-         * so that it never reaches the JVM -- an unknown option makes strict
-         * mode refuse the entire list, which would mask the real result. */
+        /* [A] NOGAME 在 VM 起来之后才处理，不在这里；这里消费它只是为了让它绝不到达 JVM ——
+         * 一个未知选项会让严格模式拒掉整份清单，那会掩盖真正结果。 */
         if (SDL_strcmp(o, "NOGAME") == 0 || SDL_strcmp(o, "-NOGAME") == 0) {
             continue;
         }
-        /*
-         * Test hook, in the same spirit as MINIMAL, NOHANDLERS and NOGAME: make
-         * the launcher behave as if the executable-memory probe had failed.
+        /* [A]
+         * 测试钩子，与 MINIMAL、NOHANDLERS 和 NOGAME 一脉相承：让启动器表现得好像
+         * 可执行内存探测失败了一样。
          *
-         * WHY IT IS WORTH CARRYING
-         *   The -Xint fallback is the only thing standing between a phone
-         *   package and an app that installs and then hangs inside
-         *   JNI_CreateJavaVM. Every device this project owns GRANTS anonymous
-         *   RWX memory, so the fallback's code path cannot be reached on any of
-         *   them -- which means it would ship having never once run. "The code
-         *   looks right" is not the same as "the fallback has been seen working",
-         *   and this project has been bitten by that difference more than once.
+         * 为什么值得一提着它
+         *   -Xint 回退，是一个手机包与一个「装得上、然后卡死在 JNI_CreateJavaVM 里」的应用之间
+         *   唯一的一道屏障。本项目拥有的每台设备都【授予】匿名 RWX 内存，所以那条回退的代码路径
+         *   在它们任何一台上都到不了 —— 这意味着它会一次都没跑过就被发出去。「代码看起来是对的」
+         *   和「这条回退被亲眼见过能工作」不是一回事，而这个项目已经被这个差别咬过不止一次。
          *
-         * With this marker the branch runs on a tablet, the -Xint option is added
-         * against a probe that actually succeeded, and the game can be watched
-         * loading interpreted (roughly 5x slower) as the proof.
+         * 有这个标记时，那个分支会在平板上运行，-Xint 选项被加在一个其实成功的探测之上，而游戏
+         * 能以其解释加载（大约慢 5 倍）被观察，作为证据。
          *
-         * Consumed here, never passed on: an unknown option makes strict mode
-         * refuse the whole list.
+         * 在这里消费掉，绝不传下去：一个未知选项会让严格模式拒掉整份清单。
          */
         if (SDL_strcmp(o, "NOEXEC") == 0 || SDL_strcmp(o, "-NOEXEC") == 0) {
             force_noexec = 1;
             continue;
         }
-        options[w++] = options[i];       /* compact the list in place */
+        options[w++] = options[i];       /* [B] 就地压缩清单 */
     }
     nExtra = w - BASE_OPTS;
 
@@ -2776,7 +2522,7 @@ static int start_jvm(void)
     if (minimal) {
         SDL_Log(" ** MINIMAL option set requested: classpath/tmpdir/Xmx only **");
         JavaVMOption kept[3 + MAX_EXTRA_OPTS];
-        kept[0] = options[0];                       /* -Djava.class.path */
+        kept[0] = options[0];                       /* [B] -Djava.class.path */
         kept[1] = options[2];                       /* -Djava.io.tmpdir */
         kept[2] = options[8];                       /* -Xmx             */
         for (int i = 0; i < nExtra; i++) kept[3 + i] = options[BASE_OPTS + i];
@@ -2786,32 +2532,25 @@ static int start_jvm(void)
         nOpts = BASE_OPTS + nExtra;
     }
 
-    /*
-     * FORCE -Xint WHEN THE JVM CANNOT GET EXECUTABLE MEMORY.
+    /* [A]
+     * 当 JVM 拿不到可执行内存时，强制 -Xint。
      *
-     * This is the belt to the options file's braces, and it exists because a
-     * device-type rule cannot answer the question. The ArkTS side asks for -Xint
-     * on phones below API 26, which was right for the one device that was
-     * measured and wrong in general:
+     * 这是选项文件那副背带的皮带，它之所以存在，是因为一条设备类型规则回答不了这个问题。ArkTS
+     * 侧在低于 API 26 的手机上请求 -Xint，那对那台被测设备是对的，但总体上不对：
      *
-     *   - a phone AT API 26 with a store signature and no ACL is refused
-     *     anonymous RWX memory, so the JIT cannot start, the launcher hangs
-     *     inside JNI_CreateJavaVM, and the device-type rule never fires because
-     *     the API version looks fine. That is the "installs and will not start"
-     *     the AppGallery reviewer hit, and with the split-package plan it is
-     *     exactly what the phone .app would do.
-     *   - a phone with a DEBUG signature does get the memory (measured), so
-     *     forcing -Xint by device type alone would throw away the JIT on the one
-     *     configuration where it works, for a 4x slowdown that buys nothing.
-     *   - a TABLET without the ACL is refused too, and no device-type rule
-     *     covers that at all.
+     *   - 一台【处于】API 26、带商店签名且没有 ACL 的手机，被拒绝匿名 RWX 内存，于是 JIT 无法
+     *     启动，启动器卡死在 JNI_CreateJavaVM 里，而设备类型规则从不触发，因为 API 版本看起来
+     *     没问题。这正是 AppGallery 审核员撞上的那个「装得上、起不来」，而在分包的方案下，手机
+     *     .app 会做的恰好就是这件事。
+     *   - 一台 DEBUG 签名的手机【确实】能拿到那块内存（实测），所以仅凭设备类型强制 -Xint 会在
+     *     唯一能用的那一个配置上白白扔掉 JIT，换来 4 倍变慢却什么都没买到。
+     *   - 一台没有 ACL 的【平板】也被拒绝，而没有任何设备类型规则覆盖这一点。
      *
-     * The probe measures the thing itself instead of guessing from a proxy, and
-     * one answer covers all three. probe_exec_mem() already ran, in
-     * diagnose_loading(), before this point.
+     * 这个探测测量的是那件事本身，而不是从一个代理去猜，一个答案覆盖以上三种。probe_exec_mem()
+     * 在此点之前已经在 diagnose_loading() 里跑过了。
      *
-     * Only ADDS the option: if the options file already asked for -Xint (the
-     * API-version case) this is a no-op and says so.
+     * 只会【添加】这个选项：如果选项文件已经请求了 -Xint（API 版本那种情形），这就是一个空操作，
+     * 并且会说明。
      */
     if (force_noexec || g_exec_probe_result != 42) {
         int already = 0;
@@ -2831,9 +2570,9 @@ static int start_jvm(void)
             SDL_Log(" !! executable memory unavailable (probe=%ld) -- FORCING -Xint; "
                     "the game will be slow but will start", g_exec_probe_result);
         } else {
-            /* Cannot happen unless MAX_EXTRA_OPTS is exhausted, which would mean
-             * jvm.options filled every slot. Loud, because the alternative is a
-             * silent hang inside JNI_CreateJavaVM. */
+            /* [A] 除非 MAX_EXTRA_OPTS 被耗尽，否则不可能发生，而那将意味着 jvm.options
+             * 填满了每一个槽位。之所以大声喊，是因为另一种可能就是在 JNI_CreateJavaVM 里静默
+             * 卡死。 */
             SDL_Log(" !! executable memory unavailable (probe=%ld) and there is NO ROOM "
                     "to add -Xint -- the JVM will probably fail to start",
                     g_exec_probe_result);
@@ -2846,51 +2585,39 @@ static int start_jvm(void)
                 "fallback was taken on purpose -- this is a test, not a real condition");
     }
 
-    /*
-     * LEAVE THE VERDICT WHERE THE UI CAN READ IT.
+    /* [A]
+     * 把判决留在 UI 读得到的地方。
      *
-     * WHY THIS EXISTS
-     *   Whether the JVM runs interpreted is now decided HERE, by measurement. The
-     *   page has to tell the player about it -- being slow with no explanation
-     *   reads as a broken port -- but the page cannot make this measurement (it
-     *   has no mmap) and cannot read these logs either: the game pushes a few
-     *   thousand lines per second through a ring buffer, and this app's own
-     *   output is gone within seconds. So the verdict travels by file, the same
-     *   channel the IME bridge already uses.
+     * 为什么有它
+     *   JVM 是否以解释方式运行，现在由【这里】、由测量来决定。页面必须把这件事告诉玩家 ——
+     *   慢而没有任何解释，读起来像是一个坏掉的移植 —— 但页面做不了这个测量（它没有 mmap），
+     *   也读不了这些日志：游戏每秒通过一个环形缓冲区推几千行，本应用自己的输出几秒内就没了。
+     *   所以这个判决以文件传递，与 IME 桥已经在用的同一个通道。
      *
-     * WHY IT DOES NOT EVEN TRY TO BE THE SAME LAUNCH
-     *   The page writes its notice decision before the XComponent mounts, and the
-     *   XComponent mounting is what starts SDL_main -- where this runs. So the
-     *   page can only ever read the PREVIOUS launch's answer. That is acceptable
-     *   because the answer is a property of the instalment, not of the launch: it
-     *   does not change from one run to the next.
+     * 为什么它连试都不试跟本次启动同步
+     *   页面在 XComponent 挂载之前就写下了它的提示决定，而 XComponent 挂载正是启动 SDL_main
+     *   的东西 —— 也就是这里跑的地方。所以页面永远只能读到【上一次】启动的答案。这是可以接受的，
+     *   因为这个答案是这次安装的属性，而不是这次启动的属性：它不会从一次运行到下一次运行改变。
      *
-     * WARNING: AND THE CASE THAT LOOKS LIKE IT BREAKS THAT
-     *   If the JVM cannot start at all, is the player stuck on a first launch
-     *   with no explanation? No: this runs BEFORE JNI_CreateJavaVM, so the file
-     *   saying "interp" is already on disk when the JVM hangs. Kill the app, open
-     *   it again, and the notice is there -- on the launch where the fallback
-     *   also takes effect and the game actually starts.
+     * 警告：以及那个看起来会打破上述说法的情形
+     *   如果 JVM 根本起不来，玩家是否会卡在毫无解释的首次启动上？不会：这个在
+     *   JNI_CreateJavaVM 【之前】运行，所以 JVM 卡住时，写着 "interp" 的文件已经在磁盘上了。
+     *   杀掉应用，再打开一次，提示就在那里 —— 就在那条回退也生效、游戏真的启动起来的启动上。
      *
-     * "interp" and "jit" rather than the raw number: the caller needs the
-     * decision, not the experiment, and the number is already in the log.
+     * 用 "interp" 和 "jit" 而不是原始数字：调用方需要的是决定，不是实验，而数字已经在日志里了。
      *
-     * WARNING: REPORT THE CAPABILITY, NOT THE OPTION LIST. This was got wrong first
-     * time round and the mistake is worth the paragraph, because it made the
-     * verdict unable to ever correct itself:
+     * 警告：报告的是能力，不是选项清单。这一点头一版弄错了，而那个错误值得这一段，因为它让判决
+     * 永远无法自我纠正：
      *
-     *     the block used to ask "is -Xint in the option list?"
+     *     这个块过去问的是「选项清单里有 -Xint 吗？」
      *
-     *   The page writes -Xint into jvm.options when IT thinks the JIT is
-     *   unavailable, so a stale request fed straight back in as a fresh verdict:
-     *   verdict interp -> page writes -Xint -> launcher sees -Xint -> verdict
-     *   interp, forever. Measured, on a phone whose probe was returning 42 the
-     *   whole time: it stayed interpreted at 12239 ms across launches while the
-     *   probe kept saying the memory was fine.
+     *   页面在它【认为】JIT 不可用时会把 -Xint 写进 jvm.options，于是一个陈旧请求被直接当作
+     *   新鲜判决喂回来：判决 interp -> 页面写 -Xint -> 启动器看到 -Xint -> 判决 interp，永远
+     *   如此。实测，在一台探测一直返回 42 的手机上：它跨多次启动一直以 12239 ms 保持解释模式，
+     *   而探测一直说内存没问题。
      *
-     *   Asking the probe instead breaks the loop: the page's request stops being
-     *   an input to its own verdict, so one launch after the capability appears,
-     *   the verdict flips to "jit" and the page takes -Xint back out.
+     *   改为问探测就打破了循环：页面的请求不再是它自己判决的输入，所以能力出现之后的下一次启动，
+     *   判决就翻成 "jit"，页面随即把 -Xint 拿走。
      */
     {
         const int incapable = (force_noexec || g_exec_probe_result != 42);
@@ -2907,14 +2634,12 @@ static int start_jvm(void)
         }
     }
 
-    /*
-     * Drop the options that were deliberately left unset.
+    /* [A]
+     * 丢掉那些被刻意留作未设置的选项。
      *
-     * Done here rather than at each construction site because the count has to
-     * match the list that is actually handed over, and doing it in one place
-     * means a later option can be made conditional the same way without having
-     * to know how nOpts is assembled. Both branches above have finished by now,
-     * including the MINIMAL one that rebuilds the list by index.
+     * 在这里做而不是在每个构造点做，是因为计数必须与实际交出去的那份清单对得上，而在一处做意味着
+     * 之后某个选项可以以同样方式变成有条件的，而不必知道 nOpts 是怎么拼出来的。上面两个分支到
+     * 现在都已经结束，包括那个按索引重建清单的 MINIMAL 分支。
      */
     {
         int kept = 0;
@@ -2931,22 +2656,17 @@ static int start_jvm(void)
     args.nOptions = nOpts;
     args.options = options;
 
-    /*
-     * STRICT FIRST, THEN LENIENT -- because "the file was read" is not evidence
-     * that a flag was understood.
+    /* [A]
+     * 先严格，后宽松 —— 因为「文件被读了」并不能证明某个 flag 被理解了。
      *
-     * This used to be unconditionally JNI_TRUE (ignore unrecognized). The cost of
-     * that only became clear while trying JVM flags to localise a crash: the log
-     * said "read 1 extra option(s)" for every flag, but a misspelt or
-     * non-existent flag produced exactly the same line and was then silently
-     * dropped. Every "that flag does not help" conclusion drawn that way was
-     * unsupported, because we could not tell "flag had no effect" from "flag
-     * never reached the VM".
+     * 这里过去无条件用 JNI_TRUE（忽略不认识的）。这么做的代价，直到为了定位一次崩溃而试 JVM
+     * flag 时才变得清楚：日志对每个 flag 都说 "read 1 extra option(s)"，但一个拼错的、或者根本
+     * 不存在的 flag 产生的是完全相同的一行，然后被静默丢弃。以那种方式得出的每一个「那个 flag
+     * 没用」的结论都站不住脚，因为我们分不清「flag 没有效果」与「flag 根本没到达 VM」。
      *
-     * So: try strict first. An unknown option makes the JVM say so explicitly --
-     * either as a returned error code or as a message on stderr, both of which we
-     * capture. Then retry lenient so one bad flag in the options file cannot stop
-     * the launcher from running at all.
+     * 所以：先试严格。一个未知选项会让 JVM 明确说出来 —— 要么是返回的错误码，要么是 stderr 上的
+     * 一条消息，两者我们都会捕获。然后再试宽松，这样选项文件里的一个坏 flag 无法让启动器彻底
+     * 无法运行。
      */
     args.ignoreUnrecognized = JNI_FALSE;
 
@@ -2955,13 +2675,23 @@ static int start_jvm(void)
 
     JavaVM *vm = NULL;
     JNIEnv *env = NULL;
+    /* [A] 在调用【之前】，绝不在之后：如果 create() 不返回，这是附近唯一一条曾经跑过的
+     * 语句。 */
+    {
+        FILE *mf = fopen(JVM_INCOMPLETE_MARKER, "w");
+        if (mf != NULL) { fputs("incomplete\n", mf); fclose(mf); }
+    }
     jint rc = create(&vm, (void **)&env, &args);
     SDL_Log(" JNI_CreateJavaVM (strict) returned %d", (int)rc);
-
+    
+    /* [A] JVM 存在了，于是问题有了答案。刻意在【此处】而不是在 start_jvm() 末尾清除：此点
+     * 之后的失败 —— 一个缺失的类、一个死掉的 surface —— 会返回一个码并打印一行，所以它已经
+     * 可见，绝不能被报告成「没有 JVM」。 */
+    unlink(JVM_INCOMPLETE_MARKER);
+    
     if (rc != JNI_OK && nOpts > BASE_OPTS) {
-        /* The extra options are the only plausible culprits -- the nine built-in
-         * ones are known good. Name them, because the useful information is
-         * WHICH flag the JVM refused. */
+        /* [C] 额外的选项是唯一说得通的元凶 —— 那九个内置的是已知好的。把它们点名，因为有用的
+         * 信息是【哪一个】flag 被 JVM 拒绝了。 */
         SDL_Log(" !! strict mode refused the options; the extras were:");
         for (int i = BASE_OPTS; i < nOpts; i++) SDL_Log("      %s", options[i].optionString);
         SDL_Log("    (an \"Unrecognized\" message above names the offender)");
@@ -2977,17 +2707,16 @@ static int start_jvm(void)
     }
     SDL_Log(" *** JVM CREATED *** vm=%p env=%p", (void *)vm, (void *)env);
 
-    /* Before ANYTHING asks the boot loader for a resource: see SANDBOX_JDK.
-     * Only if the image actually made it across -- pointing java.home at a
-     * directory without lib/modules in it would replace the VM's own, accurate
-     * error message with a less informative one saying the same thing. */
+    /* [A] 在任何东西向 boot loader 索要资源【之前】：见 SANDBOX_JDK。只在镜像真的过来了的时候
+     * 才做 —— 把 java.home 指向一个里面没有 lib/modules 的目录，会把 VM 自己那条准确的错误消息，
+     * 换成一条信息量更少、却说着同一件事的消息。 */
     if (modok == 0) {
         override_java_home(env);
     } else {
         SDL_Log(" !! java.home left alone: the module image is not in place");
     }
 
-    /* --- prove it works: System.out.println from native --- */
+    /* [B] --- 证明它能用：从 native 调用 System.out.println --- */
     jclass syscls = (*env)->FindClass(env, "java/lang/System");
     if (!syscls) { SDL_Log(" !! FindClass(System) failed"); return 4; }
 
@@ -2999,7 +2728,7 @@ static int start_jvm(void)
     (*env)->CallVoidMethod(env, out, println,
         (*env)->NewStringUTF(env, "*** HELLO FROM THE JVM ***"));
 
-    /* a couple of facts that are only knowable from inside the VM */
+    /* [B] 几个只有从 VM 内部才知道的事实 */
     jmethodID curTime = (*env)->GetStaticMethodID(env, syscls, "currentTimeMillis", "()J");
     jlong ms = (*env)->CallStaticLongMethod(env, syscls, curTime);
 
@@ -3009,15 +2738,13 @@ static int start_jvm(void)
     jmethodID avail = (*env)->GetMethodID(env, rtcls, "availableProcessors", "()I");
     jint cpus = (*env)->CallIntMethod(env, rt, avail);
 
-    /*
-     * maxMemory() is here as a POSITIVE CHECK on the option channel.
+    /* [A]
+     * maxMemory() 放在这里，是对选项通道的一次【正向检查】。
      *
-     * The log line "read N extra option(s) from <file>" only proves the FILE was
-     * read -- it says nothing about whether the JVM accepted the flags. Passing
-     * -Xmx256m and seeing this number change is the cheap, end-to-end proof that
-     * the channel actually reaches the VM. Without it, "that flag had no effect"
-     * and "that flag was never seen" are indistinguishable, which is exactly the
-     * trap this round fell into.
+     * 日志行 "read N extra option(s) from <file>" 只证明那个【文件】被读了 —— 它对 JVM 是否
+     * 接受了那些 flag 只字不提。传一个 -Xmx256m 并看到这个数字改变，才是那个通道真的到达 VM 的
+     * 廉价、端到端的证明。没有它，「那个 flag 没有效果」和「那个 flag 从没被看到」无从区分，
+     * 而这正是本轮掉进去的那个陷阱。
      */
     jmethodID maxmem = (*env)->GetMethodID(env, rtcls, "maxMemory", "()J");
     jlong maxheap = (*env)->CallLongMethod(env, rt, maxmem);
@@ -3034,14 +2761,11 @@ static int start_jvm(void)
         (*env)->ExceptionClear(env);
     }
 
-    /*
-     * The checks above are step 3's acceptance and stay as they are -- they are
-     * the only cheap proof that the VM itself is healthy, and they distinguish
-     * "the VM did not start" from "the game did not start". Only once they have
-     * all passed is the game handed control.
+    /* [A]
+     * 上面的检查是第 3 步的验收，保持原样 —— 它们是 VM 自身健康唯一的廉价证明，并且把「VM 没有
+     * 启动」与「游戏没有启动」区分开。只有当它们全都通过之后，才把控制权交给游戏。
      *
-     * NOGAME skips the handover, so a regression in step 4 can be told apart from
-     * a regression in step 3 without a rebuild.
+     * NOGAME 跳过这次交接，这样第 4 步的回归就能与第 3 步的回归区分开，而无需重建。
      */
     if (options_contain("NOGAME")) {
         SDL_Log(" ** NOGAME requested: stopping before the game is launched **");
@@ -3058,48 +2782,39 @@ static int start_jvm(void)
     return 0;
 }
 
-/*
+/* [A]
  * ---------------------------------------------------------------------------
- * MIRROR EVERY SDL_Log TO HILOG.
+ * 把每一条 SDL_Log 都镜像到 HILOG。
  *
- * WHY THIS EXISTS, and it is not convenience.
+ * 为什么有它，而这不是图方便。
  *
- *   All of this launcher's diagnostics go to SDL_Log, which writes to
- *   stdout/stderr, which the launch redirects into files inside the app sandbox.
- *   That works for a DEBUG-signed build, and it is how every measurement in this
- *   project was taken.
+ *   本启动器的全部诊断都走 SDL_Log，它写到 stdout/stderr，而启动过程把它重定向进应用沙箱里的
+ *   文件。那对 DEBUG 签名的构建有效，本项目里每一次测量都是这样取得的。
  *
- *   It does NOT work for a release-signed build. Measured on the device, with an
- *   internaltesting (release) package installed:
+ *   它对 release 签名的构建【不】有效。设备上实测，装着一个 internaltesting（release）包时：
  *
  *       hdc shell cat <sandbox>/files/stderr.log   -> Permission denied
  *       hdc shell pidof <bundle>                   -> (empty)
  *       hdc shell ps -A | grep <bundle>            -> (empty)
- *       faultlog                                    -> no entry for it
+ *       faultlog                                    -> 没有它的条目
  *
- *   So the first time a store-signed package was ever run -- 2026-09-22, on a
- *   phone whose profile grants no executable memory -- it fell back to -Xint and
- *   then CRASHED, and there was nothing to read. Every question about what the
- *   store package does is unanswerable in that state, which is the worst possible
- *   position for the one build that ships to users.
+ *   所以一个商店签名的包第一次被运行时 —— 2026-09-22，在一台 profile 不授予任何可执行内存的
+ *   手机上 —— 它回退到 -Xint，然后【崩溃了】，而什么都读不到。在那个状态下，关于商店包做了什么
+ *   的每一个问题都无从回答，对一个要发给用户的构建而言，那是最糟的处境。
  *
- *   hilog is readable for any app, whatever signed it, so the diagnostics have to
- *   go there as well.
+ *   hilog 对任何应用都可读，不管它由什么签名，所以诊断也必须去那里。
  *
- * WHY A CALLBACK AND NOT A MACRO AROUND EVERY CALL SITE
- *   SDL3 lets the process replace its log sink, so one function catches every
- *   SDL_Log in this file AND everything SDL itself logs -- including the SDL and
- *   linker messages that only appear on the paths that fail. Replacing call sites
- *   would have missed those, and there are hundreds of them.
+ * 为什么用回调，而不是在每个调用点外面包一层宏
+ *   SDL3 允许进程替换它的日志汇聚点，所以一个函数就能接住本文件里的每一条 SDL_Log【以及】SDL
+ *   自己记录的一切 —— 包括那些只在失败的路径上才出现的 SDL 和 linker 消息。替换调用点会漏掉
+ *   那些，而它们有几百个。
  *
- * WHY %{public}s AND NOT THE MESSAGE DIRECTLY
- *   hilog masks unmarked format specifiers as <private>, so passing SDL's format
- *   string through would have produced a log full of <private> instead of the
- *   values. The message arrives already formatted, so it is passed as a single
- *   public string.
+ * 为什么用 %{public}s 而不是直接传消息
+ *   hilog 会把未标记的格式说明符掩码成 <private>，所以把 SDL 的格式串直接传过去，会产出一个
+ *   满是 <private> 而不是值的日志。消息到达时已经格式化好了，所以它被当作单一 public 字符串
+ *   传入。
  *
- * The default output is kept as well, so the sandbox files still get everything
- * for the debug builds that can read them.
+ * 默认输出也保留，这样对能读取它们的 debug 构建而言，沙箱文件仍然拿到一切。
  * ---------------------------------------------------------------------------
  */
 #define MX_LOG_DOMAIN 0x0000
@@ -3111,8 +2826,7 @@ static void *g_prev_log_userdata = NULL;
 static void SDLCALL mirror_log_to_hilog(void *userdata, int category,
                                         SDL_LogPriority priority, const char *message)
 {
-    /* Keep the original behaviour first: if this ever throws, the file still
-     * has the line. */
+    /* [B] 先保留原来的行为：万一这里出什么岔子，文件里仍然有那一行。 */
     if (g_prev_log_output != NULL) {
         g_prev_log_output(g_prev_log_userdata, category, priority, message);
     }
@@ -3126,7 +2840,7 @@ static void SDLCALL mirror_log_to_hilog(void *userdata, int category,
         case SDL_LOG_PRIORITY_CRITICAL: level = LOG_ERROR; break;
         default:                        level = LOG_INFO;  break;
     }
-    /* One call, one public string -- see the note above on %{private}. */
+    /* [B] 一次调用，一个 public 字符串 —— 见上面关于 %{private} 的说明。 */
     OH_LOG_Print(LOG_APP, level, MX_LOG_DOMAIN, MX_LOG_TAG, "%{public}s", message);
 }
 
@@ -3142,62 +2856,50 @@ int main(int argc, char *argv[])
 
     install_hilog_mirror();
 
-    /*
-     * Stop SDL from turning touches into mouse events.
+    /* [A]
+     * 阻止 SDL 把触摸变成鼠标事件。
      *
-     * SDL does this by default (SDL_HINT_TOUCH_MOUSE_EVENTS). The consequence was
-     * that every touch arrived twice -- once as an emulated mouse, once as a real
-     * finger -- and Arc only understood the mouse half. That is why touch worked
-     * for taps but could never pinch: an emulated mouse is only ever pointer 0,
-     * and a pinch is defined by the second contact.
+     * SDL 默认就这么做（SDL_HINT_TOUCH_MOUSE_EVENTS）。后果是每一次触摸都到达两次 —— 一次
+     * 作为模拟鼠标，一次作为真实手指 —— 而 Arc 只理解鼠标那一半。这就是为什么触摸点击能用、
+     * 却永远捏合不了：一个模拟鼠标永远只是 pointer 0，而捏合是由第二个接触点定义的。
      *
-     * Set through the environment rather than SDL_SetHint because there are TWO
-     * mappings of libSDL3.so in this process and only one of them dispatches the
-     * touch events. The environment is shared by both; SDL_SetHint would only
-     * reach whichever copy this launcher happens to be linked against.
+     * 通过环境变量设置而不是 SDL_SetHint，因为本进程里有两份 libSDL3.so 映射，而其中只有一份
+     * 分发触摸事件。环境变量由两者共享；SDL_SetHint 只会到达本启动器恰好链接的那份副本。
      *
-     * Timing is what makes this work: the copy that matters is the one LWJGL
-     * loads, and that happens while the JVM starts the game -- comfortably after
-     * this line. The touch probe reads the hint back at dispatch time and prints
-     * it, so "the setting did not take" is visible rather than an invisible
-     * double-delivery of every input.
+     * 让这生效的是时序：要紧的那份副本是 LWJGL 加载的那份，而它发生在 JVM 启动游戏的时候 ——
+     * 稳稳地在这行之后。触摸探测在分发时把 hint 读回来并打印它，所以「设置没生效」是可见的，
+     * 而不是每一次输入都无声地重复投递。
      */
     setenv("SDL_TOUCH_MOUSE_EVENTS", "0", 1);
 
     SDL_Log("==================================================");
     SDL_Log(" Mindustry Launcher -- start the JVM");
     redirect_io();
-    /*
-     * Everything SDL's XComponent callbacks logged happened BEFORE this mark;
-     * everything after it happened while we were starting the JVM and the game.
-     * See probe_mark().
+    /* [A]
+     * SDL 的 XComponent 回调记录的一切，都发生在这个标记【之前】；它之后的一切，都发生在我们
+     * 启动 JVM 和游戏的时候。见 probe_mark()。
      *
-     * This file is deliberately NOT truncated here. The surface callback fires
-     * before this function runs -- it is what starts it -- so clearing the log at
-     * this point would delete exactly the entries that matter. It accumulates
-     * across launches instead; clear it from the PC side before a run.
+     * 这个文件刻意【不】在这里截断。surface 回调在这个函数运行之前就触发了 —— 它正是启动这个
+     * 函数的东西 —— 所以在此点清空日志会删掉恰好要紧的那些条目。它改为跨启动累积；在运行前从
+     * PC 侧清空它。
      */
     probe_mark("main() entered: JVM not started yet");
-    /* surface-copy probe removed: SDL does not export it */
-    /* crash.txt is written with O_APPEND so that a fatal signal -- which can
-     * strike before stdout is usable -- never loses the report. That also means
-     * it accumulates across launches, and reading it without clearing it first
-     * silently mixes several runs together. Start each run empty. */
+    /* [B] surface 拷贝的探测已移除：SDL 不导出它 */
+    /* [A] crash.txt 以 O_APPEND 写入，这样一个致命信号 —— 它可能在 stdout 可用之前就袭来 ——
+     * 永远不会丢失报告。这也意味着它跨启动累积，而不先清空就读它，会静默地把好几次运行混在一起。
+     * 每次运行都从空开始。 */
     unlink(DEST_ROOT "/crash.txt");
-    /* The exit markers must not survive a launch. ArkTS polls for them and
-     * closes the ability the moment one appears, so a marker left behind by the
-     * previous run would shut this run down within a quarter second of start --
-     * and it would look like a spontaneous crash rather than a stale file. */
+    /* [A] 退出标记绝不能活过一次启动。ArkTS 轮询它们，一出现就关掉 ability，所以上一次运行留下
+     * 的标记会在本次启动后四分之一秒内把这次运行关掉 —— 而它看起来会像一次自发崩溃，而不是一个
+     * 陈旧文件。 */
     unlink(EXIT_MARKER_SANDBOX);
     unlink(EXIT_MARKER_MODULE);
     SDL_Log(" stdout/stderr -> %s/{stdout,stderr}.log", DEST_ROOT);
-    /* PID vs TID settles a real question: SDL runs SDL_main on a thread it
-     * pthread_create()d, not on the process main thread. If they differ, the
-     * JVM is being created off the main thread -- which is exactly the case the
-     * build plan called the biggest unknown.
-     * (The earlier revision printed getpid() twice, so the "they differ"
-     * conclusion from that log was an artifact of the print, not a measurement.
-     * Fixed here.) */
+    /* [A] PID 对 TID 解决了一个真问题：SDL 在它自己 pthread_create() 出来的线程上运行
+     * SDL_main，而不是在进程主线程上。如果两者不同，那 JVM 就是在非主线程上被创建的 —— 这正是
+     * 构建计划所说的那个最大的未知数。
+     * （早先的一版两次打印 getpid()，所以从那份日志得出的「两者不同」结论，是那次打印的产物，
+     * 而不是一次测量。已在此修正。） */
     SDL_Log(" PID=%d TID=%ld", (int)getpid(), (long)syscall(SYS_gettid));
     SDL_Log("--------------------------------------------------");
     discover_paths();
@@ -3213,28 +2915,22 @@ int main(int argc, char *argv[])
     }
     SDL_Log("--------------------------------------------------");
 
-    /*
-     * Crash handlers are installed ONLY when the options file does not ask for
-     * them to be left alone.
+    /* [A]
+     * 崩溃处理器【只有】在选项文件不要求放过它们时才安装。
      *
-     * Why this became a variable: they have been installed since the very first
-     * revision, so they are a constant in every experiment ever run here -- and
-     * they cover SIGILL, which is precisely the signal we are dying on.
+     * 为什么这变成了一个变量：它们从最初那一版起就一直被安装，所以在这里做过的每一个实验里它们
+     * 都是一个常量 —— 而它们覆盖 SIGILL，那恰恰是我们正在死于其上的信号。
      *
-     * HotSpot installs its OWN handlers during JNI_CreateJavaVM and uses a
-     * chaining scheme: if it does not recognise a fault as one of its own, it
-     * forwards the signal to whatever handler was installed previously. We see
-     * OUR handler run, which means HotSpot forwarded it -- i.e. HotSpot did not
-     * claim the fault as its own.
+     * HotSpot 在 JNI_CreateJavaVM 期间安装【它自己的】处理器，并用一套链式方案：如果它不把某个
+     * 错误认作自己的，它就把信号转给先前安装的处理器。我们看到【我们的】处理器在跑，这意味着
+     * HotSpot 转发了它 —— 也就是说，HotSpot 没有把这次错误认作自己的。
      *
-     * That matters because HotSpot deliberately executes illegal instructions as
-     * traps and catches them itself. If its handler cannot recognise the trap, an
-     * internal mechanism that is supposed to be invisible becomes fatal. Sitting
-     * in front of that path from the very beginning is a plausible way to cause
-     * exactly the symptom we have.
+     * 这要紧，因为 HotSpot 刻意把非法指令当作陷阱来执行、并自己捕获它们。如果它的处理器认不出
+     * 那个陷阱，一个本该隐形的内部机制就会变成致命的。从一开始就坐在那条路径前面，是造成我们
+     * 现有的这个症状的一个说得通的方式。
      *
-     * So: put "NOHANDLERS" in jvm.options and this launcher installs nothing,
-     * leaving HotSpot's signal handling undisturbed.
+     * 所以：把 "NOHANDLERS" 放进 jvm.options，本启动器就什么都不安装，从而让 HotSpot 的信号
+     * 处理完全不受打扰。
      */
     extern int options_contain(const char *needle);
     if (options_contain("NOHANDLERS")) {
@@ -3247,80 +2943,66 @@ int main(int argc, char *argv[])
     SDL_Log("--------------------------------------------------");
     SDL_Log(" result = %d", rc);
 
-    /*
-     * A 20-second "staying alive 20s ..." sleep loop used to sit here. It was
-     * diagnostic scaffolding from the early days, added to watch what happened
-     * after main() returned, and it was never removed.
+    /* [A]
+     * 这里曾经有一个 20 秒的 "staying alive 20s ..." 睡眠循环。它是早期留下的诊断脚手架，加它是
+     * 为了观察 main() 返回之后发生了什么，而它一直没被移除。
      *
-     * It was also the entire cause of the "Quit freezes, then the app exits
-     * several seconds later" complaint. The sequence is:
+     * 它同时也是「退出会卡住，几秒后应用才退出」那个抱怨的全部原因。过程是：
      *
-     *   the game's main() returns  -> nothing renders any more, so the picture
-     *                                 freezes at that instant
-     *   this loop sleeps 20 s      -> during which the process is still alive,
-     *                                 so the launcher has not taken over
-     *   the loop ends, we return   -> teardown, and only now does the app go
+     *   游戏的 main() 返回  -> 不再渲染任何东西，所以画面在那一刻冻住
+     *   这个循环睡 20 秒     -> 期间进程还活着，所以启动器还没有接管
+     *   循环结束，我们返回   -> 拆除，直到这时应用才走
      *
-     * So the delay was never in SDL or in a JVM shutdown hook; measured 2026-09-20
-     * with quit_timing.sh as ~20 s between the click and the process
-     * disappearing, matching this loop's own duration exactly.
+     * 所以那个延迟从来不在 SDL 里、也不在 JVM 的 shutdown hook 里；2026-09-20 用 quit_timing.sh
+     * 实测为点击与进程消失之间约 20 秒，恰好与这个循环自身的时长吻合。
      *
-     * Removed. Nothing replaced it: there is no work left to do here, the game
-     * has already returned, and the sooner we return the sooner the system can
-     * tear the app down.
+     * 已移除。没有用任何东西替换它：这里已经没有活了，游戏早就返回了，我们越早返回，系统就能越早
+     * 把应用拆掉。
      */
     SDL_Log("==================================================");
-    /*
-     * Terminate with _exit rather than returning.
+    /* [A]
+     * 用 _exit 终止，而不是 return。
      *
-     * Returning from main runs the C runtime's atexit handlers and every static
-     * destructor, and that teardown ABORTS -- measured, on every single quit:
+     * 从 main 返回会运行 C 运行时的 atexit 处理器和每一个静态析构函数，而那次拆除会【中止】——
+     * 实测，每一次退出都是：
      *
      *   *** FATAL SIGNAL 6 (code=-6) at ... pc 0x5acff84ef4
      *       in /lib/ld-musl-aarch64.so.1     thread SDL_main
      *
-     * and the system duly files it as a crash:
+     * 而系统照章把它归档成一次崩溃：
      *
      *   AppMS: ... reason=Cpp Crash ... exitSigno = 6
      *   HiView-CrashValidator: exitSigno = 6
      *
-     * The app is on its way out either way, so the signal changes nothing about
-     * the outcome -- but it means every normal quit is reported to the OS as a
-     * crash, which raises a crash report and can put a dialog in front of the
-     * user. That is the wrong story to tell about a button the user pressed.
+     * 应用反正都要走了，所以这个信号对结果毫无改变 —— 但它意味着每一次正常退出都被报告给 OS 为
+     * 一次崩溃，那会生成一份崩溃报告，并可能在用户面前弹出一个对话框。对于一个用户按下的按钮，
+     * 这是一个错误的说法。
      *
-     * The crashing teardown is not ours to fix at this point: it happens after
-     * the game's main() has already returned, while libjvm and SDL are unloaded
-     * in an order neither supports on this platform. Nothing is gained by
-     * running it -- the process is exiting and the OS reclaims the mappings
-     * regardless. So skip it.
+     * 崩溃式的拆除在这一点上不是我们能修的：它发生在游戏的 main() 已经返回之后，那时 libjvm 和
+     * SDL 正以这个平台上两者都不支持的顺序被卸载。运行它得不到任何东西 —— 进程正在退出，OS 反正
+     * 会回收那些映射。所以跳过它。
      *
-     * Flush first: _exit does not run stdio cleanup, and stdout.log/stderr.log
-     * are redirected to files whose tail is the most useful evidence we have.
+     * 先 flush：_exit 不运行 stdio 清理，而 stdout.log/stderr.log 被重定向到的文件，其尾部是我们
+     * 最有用的证据。
      *
-     * The game's own persistence is not affected -- Arc saves its settings
-     * during application shutdown, which has already completed by the time
-     * main() returns (the audio deinit logged just above marks it). Verified
-     * after this change by confirming settings.bin is still rewritten on quit.
+     * 游戏自身的持久化不受影响 —— Arc 在 application shutdown 期间保存它的设置，而那在 main()
+     * 返回时已经完成（紧挨着上面记录的音频 deinit 就是它的标志）。这次改动之后已通过确认退出时
+     * settings.bin 仍被重写来验证。
      *
      * ---------------------------------------------------------------------
-     * Before exiting, hand the shutdown to ArkTS.
+     * 退出之前，把关机交给 ArkTS。
      *
-     * _exit alone ends the process while the ability is still alive, and that is
-     * what the system records as "Cpp Crash" (AppMS: reason=Cpp Crash,
-     * killId=2004) -- even with no signal and no crash dump, which is how we know
-     * it is a classification of an abnormal-looking exit rather than an actual
-     * fault. See quit_timing.sh and the notes in the desktop write-up.
+     * 单靠 _exit 会在 ability 仍然活着的时候结束进程，而系统把那记录为 "Cpp Crash"
+     * （AppMS: reason=Cpp Crash, killId=2004）—— 即使没有信号、没有崩溃 dump 也一样，我们就是
+     * 靠这点知道它是对一次看起来异常之退出的分类，而不是一次真正的错误。见 quit_timing.sh 和
+     * 桌面版文章里的笔记。
      *
-     * So instead: drop a marker, give ArkTS a short window to call
-     * terminateSelf(), and exit ourselves if it does not. When it works, the
-     * framework tears the ability down and kills the process -- a normal end,
-     * with no C runtime teardown of ours in the path either.
+     * 所以改为：放下一个标记，给 ArkTS 一个短窗口调用 terminateSelf()，如果它没有调用就自己退出。
+     * 当它生效时，框架把 ability 拆掉并杀掉进程 —— 一次正常结束，路径里也没有我们的 C 运行时
+     * 拆除。
      *
-     * The window is short and deliberately bounded. If the handshake does not
-     * work the app must still exit; a hang here would be far worse than the
-     * mislabelled log line this is trying to fix. Measured cost when the
-     * fallback is taken: ~1.2 s (quit_timing.sh).
+     * 这个窗口很短，而且刻意有界。如果这个握手不生效，应用仍然必须退出；在这里卡死，会远比它试图
+     * 修的那条被错标的日志行糟糕得多。走回退时实测的代价：约 1.2 秒（quit_timing.sh）。
      */
     {
         const char *paths[2] = { EXIT_MARKER_SANDBOX, EXIT_MARKER_MODULE };

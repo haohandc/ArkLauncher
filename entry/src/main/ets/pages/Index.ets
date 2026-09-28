@@ -5,88 +5,86 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { KeyCode } from '@kit.InputKit';
 import { window } from '@kit.ArkUI';
 import { ensureModFolder, modFolderPath } from '../mods/ModImporter';
-/* Exported so this page can write the bridge a second time, once the folder it
- * names actually exists. See the note at the ensureModFolder() call. */
+/* [A] 导出它，是为了让本页在它所指的文件夹真正存在之后，再写一次桥接文件。
+ * 理由见 ensureModFolder() 调用处的说明。 */
 import { writeUserDirs } from '../entryability/EntryAbility';
-/* The crash report is CAPTURED in the ability's onCreate (it has to be read
- * before native code unlinks it) and PUBLISHED here, which is the first moment
- * the Download folder is known to exist. See diagnostics/ExportDiagnostics.ets. */
+/* [A] 崩溃报告在 ability 的 onCreate 中被【捕获】（必须在原生代码 unlink 它之前读取），
+ * 再在这里【发布】—— 这是第一个能确定 Download 文件夹已存在的时刻。
+ * 见 diagnostics/ExportDiagnostics.ets。 */
 import { publish as publishCrash, exportNow as exportDiagnosticsNow } from '../diagnostics/ExportDiagnostics';
-/* `focusControl` needs no import: it is an ArkTS framework global, like
- * getContext. Importing it from @kit.ArkUI does not compile. */
+/* [A] `focusControl` 无需 import：它是 ArkTS 框架全局变量，和 getContext 一样。
+ * 从 @kit.ArkUI 导入它编译不过。 */
+import shield from 'libshield.so'; // [B] 坚盾
 
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/*
- * COMPATIBILITY MODE -- add -Xint when this install was not given anonymous
- * executable memory.
+/* [A]
+ * 兼容模式 —— 当本次安装没有被授予匿名可执行内存时，追加 -Xint。
  *
- * ⚠️⚠️ MEASURED 2026-09-22: THIS DOES NOT RESCUE SUCH A DEVICE.
+ * ⚠️⚠️ 实测于 2026-09-22：这【救不了】这样的设备。
  *
- * It is kept for two reasons and neither of them is "it works": the alternative is
- * to do nothing at all, and FORCE_COMPAT_MODE below is how the interpreter's COST
- * is measured on hardware that does not need it.
+ * 保留它有两个理由，两个都不是「它能用」：替代方案是彻底什么都不做；以及下面
+ * 的 FORCE_COMPAT_MODE，那是在不需要它的硬件上【测量】解释器【开销】的手段。
  *
- * WHAT WAS MEASURED. A device-bound RELEASE profile -- no executable-memory ACL,
- * bound to the phone's own UDID -- produced this in hilog and then nothing:
+ * 实测到了什么。一个绑定设备的 RELEASE 配置 —— 没有可执行内存 ACL，绑定手机自身
+ * 的 UDID —— 在 hilog 里打出这些，然后就没了：
  *
  *     !! executable memory unavailable (probe=-1) -- FORCING -Xint
  *     wrote the verdict for the UI: interp (probe=-1)
  *     calling JNI_CreateJavaVM (strict) ...
  *       opt: ... -Xint
  *
- * No return, no error, the process gone.
+ * 没有返回，没有报错，进程直接消失。
  *
- * ⇒ The interpreter still needs executable memory. HotSpot builds its startup
- *   stubs (SharedRuntime / StubRoutines) before it ever looks at how bytecode
- *   will be run, so "interpreted" is not a fallback for a device that withholds
- *   that memory -- it answers a question that was never the blocker.
+ * ⇒ 解释器仍然需要可执行内存。HotSpot 在它去考虑「字节码怎么执行」之前，就已经
+ *   在构建它的启动 stub（SharedRuntime / StubRoutines）了，所以对于【不给】这块
+ *   内存的设备，「解释执行」不是退路 —— 它回答的是一个从来就不是卡点的问题。
  *
- * ⚠️ THE EARLIER "VERIFIED" WAS NOT A TEST OF THIS. The fallback was once called
- * verified because the NOEXEC hook forced the decision -- but the memory was
- * available throughout that run, so what actually passed was "the option is added
- * on a device that never needed it". Forcing an option is not the same as being in
- * the state the option exists for. See RELEASE-MAINTENANCE.md 2.13b.
+ * ⚠️ 早先那个「已验证」并不是对这件事的测试。这个退路曾被叫作已验证，理由是
+ * NOEXEC 钩子强制做出了决定 —— 但那一整轮运行里内存都是可用的，所以实际通过的
+ * 只是「在从不需要它的设备上，这个选项被加上了」。强制加一个选项，和在【该选项
+ * 存在的那个状态】里，不是一回事。见 RELEASE-MAINTENANCE.md 2.13b。
  *
- * WHAT DECIDES IT: the CAPABILITY, probed by the launcher every launch -- not the
- * system version and not the device class. The rule below is therefore only the
- * FIRST-LAUNCH guess, for the one launch that has no verdict yet; from the second
- * launch on the launcher's own measurement outranks it.
+ * 决定它的是什么：是那个【能力】，由启动器每次启动时探测 —— 不是系统版本，也不是
+ * 设备类别。所以下面的规则只是【首启】猜测，只用于那唯一一次还没有结论的启动；
+ * 从第二次启动起，启动器自己的测量就压过它。
  *
- * ⇒ AND SO THE STORE LISTING HAS NO PHONE PACKAGE. A phone cannot be granted the
- *   ACL, this fallback does not save it, and a package that installs and cannot
- *   start is worse than one the store never offers. Phones are served by the
- *   self-signed build instead, where a debug profile supplies the memory.
+ * ⇒ 所以应用商店里【没有手机包】。手机拿不到那个 ACL，这个退路救不了它，而一个
+ *   装上却起不来的包，比商店根本不提供的包更糟。手机改用自签名构建来服务，那里
+ *   由 debug 配置提供这块内存。
  *
- * WHAT WAS REMOVED, AND WHY. A full-screen notice used to tell the player all
- * this, and it once said the game would merely be SLOWER (measured: 5-6 s to load,
- * against ~20 s interpreted). On the devices where it actually appeared that was a
- * promise the app could not keep: the notice was armed in aboutToAppear, BEFORE
- * the XComponent mounted, so the player read it, tapped it away, and then watched
- * the app die. Deleting it was the user's call. The wording, the marker file and
- * the 5-second countdown are preserved in RELEASE-MAINTENANCE.md 2.13b.
+ * 删掉了什么，以及为什么。曾有一个全屏提示把这些都告诉玩家，它一度说游戏只是会
+ * 变【慢】（实测：加载 5-6 s，对照解释执行的 ~20 s）。在实际会出现它的那些设备
+ * 上，那是一个应用兑现不了的承诺：提示是在 aboutToAppear 里武装的，早于
+ * XComponent 挂载，于是玩家读了它、点掉了它，然后眼看着应用死掉。删掉它是用户的
+ * 决定。原文措辞、标记文件和那 5 秒倒计时都保存在 RELEASE-MAINTENANCE.md 2.13b。
  */
 const JVM_OPTIONS_FILE_NAME = 'jvm.options';
 
-/*
- * Where the LAUNCHER records whether the JVM actually got executable memory.
+/* [A]
+ * 启动器在哪里记录 JVM 是否真的拿到了可执行内存。
  *
- * An absolute literal for the same reason as the IME bridge below: this is the
- * application-level directory the native side writes, while context.filesDir is
- * the module-level one. They look almost identical and are not interchangeable.
+ * 用绝对字面量，理由和下面的 IME 桥接相同：这是原生侧写入的【应用级】目录，而
+ * context.filesDir 是【模块级】的那个。两者看起来几乎一样，但不能互换。
  *
- * Contents are one word: "interp" or "jit".
+ * 内容是一个词："interp" 或 "jit"。
  */
 const EXEC_MEMORY_FILE = '/data/storage/el2/base/files/execmem';
-
-/**
- * What the launcher measured LAST launch, or '' if it has not said yet.
+const JVM_INCOMPLETE_FILE = '/data/storage/el2/base/files/jvm_incomplete';
+/* [A]
+ * 那次失败启动自己的日志。它必须【尽早】读，否则就别读：launcher.c 在 main() 一
+ * 启动时就以 O_TRUNC 打开它，而 main() 是在 XComponent 挂载时启动的 —— 所以运行
+ * 更早的 aboutToAppear 是「上一次启动的日志仍然存在」的唯一窗口。和 EntryAbility
+ * 的 stashIfAny() 是同一个窗口、同一个理由。
+ */
+const STDERR_LOG_FILE = '/data/storage/el2/base/files/stderr.log';
+/** [A]
+ * 启动器【上一次】启动测到的结果，或者还没表态时是 ''。
  *
- * '' means "no measurement" -- a fresh install, or a launch where the file could
- * not be written -- and the caller falls back to its own guess. It does NOT mean
- * "the JIT works": treating an absent file as good news is how a device that
- * cannot start gets no notice at all.
+ * '' 的意思是「没有测量」—— 全新安装，或者某次启动文件没写成 —— 调用方会退回用
+ * 自己的猜测。它【不】意味着「JIT 能用」：把文件不存在当成好消息，正是一个起不来
+ * 的设备连提示都收不到的原因。
  */
 function launcherExecMemoryVerdict(): string {
   try {
@@ -98,81 +96,97 @@ function launcherExecMemoryVerdict(): string {
     return '';
   }
 }
-/* The API level below which this project USED TO assume the JIT was unavailable.
+/** [A]
+ * 上一次启动日志里第一行含 `needle` 的内容，没有就返回 ''。
  *
- * WARNING: A GUESS, NOT A THRESHOLD. It came from one API 24 phone, and the device
- * class was never separated from the version -- see the note at the top of this
- * file. It survives only because the launcher's measurement corrects a wrong guess
- * one launch later, and because guessing "no JIT" costs a slow first launch rather
- * than a failed one. */
+ * 一次死在 JNI_CreateJavaVM 里的启动，没有别的记录：它不返回错误码，不写
+ * faultlog，进程在任何东西来得及问它之前就没了。所以这里是把启动器自己的话
+ * 逐字引回来，而不是概述。
+ *
+ * 注意：needle 必须足够具体。光写 'errno=' 也会匹配到那两行无害的
+ * "Download NOT READABLE errno=1"，那就会报出错误的失败。
+ */
+function logLine(needle: string): string {
+  try {
+    if (!fs.accessSync(STDERR_LOG_FILE)) {
+      return '';
+    }
+    const lines: Array<string> =
+      fs.readTextSync(STDERR_LOG_FILE).split(String.fromCharCode(10));
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].indexOf(needle) >= 0) {
+        return lines[i].trim();
+      }
+    }
+  } catch (e) {
+    /* [C] 空答案会作为 "(not recorded)" 显示给玩家 */
+  }
+  return '';
+}
+/* [C] 低于这个 API level，本项目【过去】假设 JIT 不可用。
+ *
+ * 警告：这是一个猜测，不是阈值。它来自一台 API 24 的手机，而设备类别从来没有和
+ * 版本区分开 —— 见本文件顶部的说明。它能留到今天，只是因为启动器的测量会在下一次
+ * 启动时纠正错误的猜测，也因为猜「无 JIT」的代价只是首启变慢，而不是启动失败。 */
 const MIN_API_FOR_JIT = 26;
-/*
- * FORCE COMPATIBILITY MODE ON EVERY DEVICE.
+/* [A]
+ * 在【所有】设备上强制兼容模式。
  *
- * This exists to MEASURE, not to ship. The cost of -Xint is otherwise
- * unmeasurable: no API 24 device is available and a release-signed package
- * cannot be sideloaded, so the only way to feel the slowdown is to run it on
- * hardware that does not need the fallback.
+ * 它的存在是为了【测量】，不是为了发布。-Xint 的代价本来无法测量：手边没有
+ * API 24 设备，而 release 签名的包无法侧载，所以想感受这个变慢，唯一的办法是在
+ * 并不需要这个退路的硬件上跑它。
  *
- * MUST BE false IN ANY BUILD THAT SHIPS.
+ * 任何要发布的构建里它都【必须】是 false。
  */
 const FORCE_COMPAT_MODE = false;
 
-/**
- * The app now requests NO runtime permissions. The list below is empty and
- * requestPerms() skips the call entirely when it is.
+/** [A]
+ * 现在应用【不再】申请任何运行时权限。下面的列表是空的，而它是空的时候
+ * requestPerms() 会整个跳过那次调用。
  *
- * REMOVED 2026-09-22: ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY. It was
- * declared so the app could reach the user's Download directory with
- * Environment.getUserDownloadDir(). That API is documented as needing
- * SystemCapability.FileManagement.File.Environment.FolderObtain and as being
- * "currently 2in1 devices only", so on a phone it throws "The device doesn't
- * support this api" whatever the permission state is (measured with the grant
- * applied by hand, so the grant is not the variable).
+ * 移除于 2026-09-22：ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY。当初声明它，
+ * 是为了让应用能用 Environment.getUserDownloadDir() 够到用户的 Download 目录。
+ * 该 API 文档写明需要 SystemCapability.FileManagement.File.Environment.FolderObtain，
+ * 并且「目前仅 2in1 设备」，所以在手机上无论权限状态如何它都会抛
+ * "The device doesn't support this api"（实测时是手工把授权加上去的，所以授权不是
+ * 那个变量）。
  *
- * ⚠️ One thing the removal does NOT change: ModImporter.ets STILL calls
- * getUserDownloadDir(), as route A of createModFolder -- it is what the tablet
- * reports a path for. What went away is the permission, not the call: route A
- * never worked anyway (the tablet's mkdir returns EPERM), and the route that
- * does the work is DocumentPickerMode.DOWNLOAD, which needs no permission at
- * all. An earlier version of this comment claimed "nothing calls
- * getUserDownloadDir() any more", which was simply false.
+ * ⚠️ 移除它【没有】改变的一件事：ModImporter.ets 【仍然】调用
+ * getUserDownloadDir()，作为 createModFolder 的 route A —— 平板靠它报出一个路径。
+ * 消失的是权限，不是那次调用：route A 本来也从来没用过（平板的 mkdir 返回 EPERM），
+ * 真正干活的是 DocumentPickerMode.DOWNLOAD，它根本不需要任何权限。这段注释的早先
+ * 版本曾声称「已经没有任何东西调用 getUserDownloadDir() 了」，那是彻底错的。
  *
- * WHAT THE MEASUREMENTS SAID
- *   Measured, same HAP, same signature (identical appId):
+ * 测量结果说明了什么
+ *   实测，同一个 HAP、同一个签名（appId 完全相同）：
  *
- *     tablet : reqPermissionStates [0, 0]  -- both granted
- *     phone  : reqPermissionStates [0, -1] -- this one NOT granted
+ *     tablet : reqPermissionStates [0, 0]  -- 两个都授予
+ *     phone  : reqPermissionStates [0, -1] -- 这一个【未】授予
  *
- *   ⚠️ An earlier version of this comment explained that as authResults = 2
- *   meaning "INVALID REQUEST", so the system never showed a dialog and re-asking
- *   could not help. That reading is WITHDRAWN: the same call also returns
- *   dialogShown = true and errorReason = 0 ("this request is valid"), and returns
- *   about 170 ms after it is made, which is far too fast for anyone to have
- *   answered a dialog. The three fields do not agree and no cause is claimed. See
- *   docs/LIMITATIONS.md.
+ *   ⚠️ 这段注释的早先版本把这解释成 authResults = 2 即 "INVALID REQUEST"，
+ *   于是系统从不弹对话框、再问也没用。那个解读已【撤回】：同一次调用还返回了
+ *   dialogShown = true 和 errorReason = 0（"this request is valid"），并且在发起后
+ *   约 170 ms 就返回 —— 这个速度快到不可能有人来得及回答对话框。三个字段彼此矛盾，
+ *   因此这里不主张任何原因。见 docs/LIMITATIONS.md。
  *
- *   The request stays best-effort: on hardware that offers the grant the player is
- *   asked once, and on hardware that does not, nothing happens and nothing breaks.
+ *   这次请求仍是尽力而为：在能提供授权的硬件上，玩家会被问一次；在不支持的硬件上，
+ *   什么都不会发生，也不会坏掉。
  */
 const WANTED: Permissions[] = [
 ];
 
 async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
-  /*
-   * Nothing to ask for means nothing to do.
+  /* [B]
+   * 没什么可申请的，就没什么可做的。
    *
-   * The list is EMPTY as of 2026-09-22 -- READ_WRITE_DOWNLOAD_DIRECTORY was the
-   * last entry and it is gone (see the note on WANTED). Nothing this app does
-   * needs a runtime permission: the one thing that ever did was reaching into
-   * the user's Download directory, and that route never worked on any device
-   * this project owns. The remaining permission, INTERNET, is install-granted
-   * and never appears here.
+   * 截至 2026-09-22，这个列表是【空的】—— READ_WRITE_DOWNLOAD_DIRECTORY 是最后
+   * 一项，也已经没了（见 WANTED 上的说明）。这个应用做的任何事都不需要运行时权限：
+   * 唯一需要过的那件事就是伸手去够用户的 Download 目录，而那条路在本项目拥有的任何
+   * 设备上都没成功过。剩下的权限 INTERNET 是安装即授予，永远不会出现在这里。
    *
-   * So this is the normal path now, not a corner. What
-   * requestPermissionsFromUser() does with an empty array is not documented
-   * anywhere this project has looked, and the answer does not matter: the call
-   * is skipped, so the question never comes up.
+   * 所以这现在是正常路径，不是边角情况。requestPermissionsFromUser() 拿到空数组
+   * 会怎样，本项目查过的地方都没有文档，而这也不重要：这次调用被跳过了，所以这个
+   * 问题根本不会出现。
    */
   if (WANTED.length === 0) {
     hilog.info(DOMAIN, TAG, 'permissions: nothing to request');
@@ -190,30 +204,26 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
     }
 
     const res = await atm.requestPermissionsFromUser(ctx, WANTED);
-    /*
-     * Log all four fields, not just the two that were obvious.
+    /* [A]
+     * 把四个字段全打出来，不只打那两个显而易见的。
      *
-     * This loop used to print only permissions/authResults, which is why a
-     * report of "the permission prompt has stopped appearing" took a session to
-     * explain. The result carries dialogShownResults and errorReasons as well,
-     * and those are the two that answer "why was no dialog shown?" -- see
-     * security/PermissionRequestResult.d.ts:
+     * 这个循环过去只打印 permissions/authResults，这就是一句「权限弹窗不再出现」
+     * 的报告要花一整个会话来解释的原因。结果里还带着 dialogShownResults 和
+     * errorReasons，而回答「为什么没弹对话框」的正是这两个 —— 见
+     * security/PermissionRequestResult.d.ts：
      *
-     *   authResults  0 = granted, -1 = not authorized, 2 = INVALID REQUEST
-     *                (not declared / bad name / request conditions unmet)
-     *   dialogShown  true = a dialog was shown; false = the system did not show
-     *                one, because the permission state, type or policy does not
-     *                allow the dialog path
-     *   errorReasons 0 valid, 1 bad name, 2 not declared, 3 conditions unmet,
-     *                4 privacy statement not accepted, 5 this permission does
-     *                not support being requested by dialog, 6 manual_settings --
-     *                can only be granted from the Settings page, 12 service error
+     *   authResults  0 = 已授予, -1 = 未授权, 2 = INVALID REQUEST
+     *                （未声明 / 名字错 / 请求条件不满足）
+     *   dialogShown  true = 弹了对话框；false = 系统没弹，
+     *                因为权限状态、类型或策略不允许走对话框这条路径
+     *   errorReasons 0 有效, 1 名字错, 2 未声明, 3 条件不满足,
+     *                4 隐私声明未接受, 5 该权限不支持通过对话框申请,
+     *                6 manual_settings —— 只能在设置页授予, 12 服务错误
      *
-     * Measured on the HarmonyOS 7 phone: authResults came back 2 for
-     * READ_WRITE_DOWNLOAD_DIRECTORY, so no dialog appeared, and the state stayed
-     * -1. That phone also reports "The device doesn't support this api" from
-     * Environment.getUserDownloadDir(), which is the same fact from the other
-     * side. See docs/LIMITATIONS.md.
+     * 在 HarmonyOS 7 手机上实测：READ_WRITE_DOWNLOAD_DIRECTORY 的 authResults
+     * 返回 2，所以没有弹窗，状态停在 -1。那台手机从
+     * Environment.getUserDownloadDir() 也报 "The device doesn't support this
+     * api"，这是同一个事实的另一面。见 docs/LIMITATIONS.md。
      */
     for (let i = 0; i < res.permissions.length; i++) {
       const shown: string = (res.dialogShownResults !== undefined
@@ -225,24 +235,21 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
         'permission request: %{public}s -> auth=%{public}d dialogShown=%{public}s errorReason=%{public}d',
         res.permissions[i], res.authResults[i], shown, reason);
       if (res.authResults[i] === 2) {
-        /*
-         * Reported as 2 (not granted) -- but do NOT narrate a cause here.
+        /* [A]
+         * 报出来是 2（未授予）—— 但这里【不要】叙述原因。
          *
-         * The first version of this warning said "the system rejected this
-         * request as invalid, so no dialog will appear", reasoning from the SDK
-         * note that 2 "usually" means an invalid request. The measured tuple on
-         * the phone contradicts that reading:
+         * 这条警告的第一个版本说「系统把这个请求判为无效，所以不会弹对话框」，
+         * 是从 SDK 那句「2 通常表示无效请求」推出来的。手机上的实测元组反驳了这个
+         * 解读：
          *
          *     auth=2   dialogShown=true   errorReason=0
          *
-         * and errorReason 0 means "this request is valid". A dialog cannot have
-         * been answered either: the whole call returns about 170 ms after it is
-         * made, which is far too fast for a person. So the three fields do not
-         * fit one story, and guessing which is authoritative is how a wrong
-         * explanation ends up in a log that someone later trusts.
+         * 而 errorReason 0 的意思是 "this request is valid"。也不可能是有人回答了
+         * 对话框：整次调用在发起后约 170 ms 就返回了，这对一个人来说太快了。所以这
+         * 三个字段凑不成一个故事，而猜测哪一个才算准，正是让一个错误解释留进日志、
+         * 后来被人信任的路子。
          *
-         * The line above records all four values unchanged. What is certain is
-         * only the outcome: not granted, and the player sees no prompt.
+         * 上面那行把四个值原样记录下来。能确定的只有结果：未授予，玩家看不到弹窗。
          */
         hilog.warn(DOMAIN, TAG,
           '  %{public}s: NOT GRANTED (authResult 2). dialogShown=%{public}s, '
@@ -257,258 +264,218 @@ async function requestPerms(ctx: common.UIAbilityContext): Promise<void> {
   }
 }
 
-/**
- * No runtime permissions are requested any more.
+/** [A]
+ * 不再申请任何运行时权限。
  *
- * An earlier revision asked for READ_WRITE_DOWNLOAD_DIRECTORY, because the plan
- * at that time was to keep the JDK in the user's Download area -- with the
- * comment "JDK 放在用户 Download 区时要读它". That plan was abandoned: the JDK
- * now ships inside the HAP and is copied into the app's own sandbox, so the
- * permission guarded a path nothing walks any more.
+ * 更早的一个版本申请了 READ_WRITE_DOWNLOAD_DIRECTORY，因为当时的计划是把 JDK 放在
+ * 用户的 Download 区 —— 注释写的是「JDK 放在用户 Download 区时要读它」。那个计划
+ * 被放弃了：现在 JDK 随 HAP 一起打包，并被复制进应用自己的沙箱，所以那个权限守的
+ * 是一条已经没人走的路。
  *
- * Measured before removing it: denying the permission changes nothing about how
- * the game runs. Its data goes to the sandbox -- user.home is redirected there,
- * and files/.local/share/Mindustry/ holds saves, settings.bin, mods and cache --
- * its assets come out of the game jar, and the only feature that wants a
- * user-visible directory is Arc's file chooser backend,
- * libarc-filedialogsarm64.so, which cannot load here at all: it is
- * tinyfiledialogs -- zenity/kdialog/popen -- and it is glibc-linked. That is a
- * statement about ARC'S library, not about this platform's own picker, which
- * works and is what the mods menu uses (see mods/ModImporter.ets). An earlier
- * wording here said only "the file picker ... cannot load", which reads as the
- * latter and cost a round of investigation.
+ * 移除之前实测过：拒绝该权限对游戏怎么运行毫无影响。它的数据进沙箱 —— user.home
+ * 被重定向到那里，files/.local/share/Mindustry/ 存放存档、settings.bin、模组和
+ * 缓存 —— 它的素材来自游戏 jar，唯一想要一个用户可见目录的功能是 Arc 的文件选择器
+ * 后端 libarc-filedialogsarm64.so，而它在这里根本加载不了：那是 tinyfiledialogs
+ * —— zenity/kdialog/popen —— 而且是 glibc 链接的。这句话说的是【Arc 的】那个库，
+ * 不是本平台自带的文件选择器；后者能用，也正是模组菜单用的那个（见
+ * mods/ModImporter.ets）。这里早先的措辞只写了「文件选择器……加载不了」，读起来
+ * 指的是后者，白白浪费了一轮排查。
  *
- * Removing it drops an authorisation prompt at startup. The reason string
- * perm_reason_DOWNLOAD is still in resources/ -- now unreferenced and harmless.
+ * 移除它会去掉启动时的一次授权弹窗。那个原因字符串 perm_reason_DOWNLOAD 仍在
+ * resources/ 里 —— 现在已无人引用，无害。
  */
 
-/*
- * Where the native side looks for these. Deliberately literal paths: ArkTS's
- * context.filesDir is the HAP-level directory, which is NOT the application-level
- * one native code shares, so a file written there would never be seen.
+/* [A]
+ * 原生侧在哪里找这些文件。刻意用字面路径：ArkTS 的 context.filesDir 是 HAP 级
+ * 目录，它【不是】原生代码共享的那个应用级目录，所以写在那里的文件永远不会被看到。
  */
 const IME_WANT_FILE = '/data/storage/el2/base/files/ime_want';
 const IME_CMD_FILE = '/data/storage/el2/base/files/ime_cmd';
-/*
- * Where the game's text field actually is, as "x y w h" in game pixels.
+/* [A]
+ * 游戏的文本框到底在哪，格式为 "x y w h"，单位是游戏像素。
  *
- * Used to put our invisible field ON TOP of it, so that the framework's keyboard
- * avoidance moves the page by exactly the distance needed to reveal it. Asking
- * the framework is the whole point: it already knows how to keep a focused field
- * visible above the keyboard, and it does the move itself.
+ * 用来把我们的隐形文本框盖到它【上面】，好让框架的键盘避让把页面移动恰好足够
+ * 露出它的距离。借助框架正是关键：它本来就知道怎么让一个聚焦的文本框保持在键盘
+ * 上方可见，而且移动是它自己做的。
  */
 const IME_RECT_FILE = '/data/storage/el2/base/files/ime_rect';
 
-/*
- * A MODS_DIR CONSTANT LIVED HERE and is gone with its only user. Nothing in this
- * file writes into the game's mods directory any more, so naming it here would
- * be a path written down for no reader.
+/* [A]
+ * 这里【曾经】有一个 MODS_DIR 常量，已随它唯一的用户一起消失。本文件里再没有
+ * 任何东西写入游戏的模组目录，所以把它写在这里就是一条没人读的路径。
  *
- * Kept as a note because the arithmetic is worth remembering if it is ever needed
- * again: the launcher points user.home at DEST_ROOT, Arc's
- * OS.getAppDataDirectoryString() builds "<user.home>/.local/share/Mindustry/",
- * and Vars.modDirectory is dataDirectory.child("mods/") -- so on the device it is
- * /data/storage/el2/base/files/.local/share/Mindustry/mods. It is an absolute
- * literal rather than something derived, for the same reason as the IME files
- * above: that is the APPLICATION-level directory native code shares, while
- * context.filesDir is the module-level one.
+ * 留作备注，是因为这套算术万一以后还用得上，值得记住：启动器把 user.home 指向
+ * DEST_ROOT，Arc 的 OS.getAppDataDirectoryString() 拼出
+ * "<user.home>/.local/share/Mindustry/"，而 Vars.modDirectory 是
+ * dataDirectory.child("mods/") —— 所以在设备上它是
+ * /data/storage/el2/base/files/.local/share/Mindustry/mods。用绝对字面量而不是
+ * 推导出来的值，理由和上面的 IME 文件相同：那是原生代码共享的【应用级】目录，而
+ * context.filesDir 是模块级的那个。
  */
 
-/*
- * seedProbeMod() and its two constants lived here. REMOVED, and the reason is
- * the same one that removed the menu row and the folder scan:
+/* [A]
+ * seedProbeMod() 和它的两个常量曾在这里。【已删除】，理由和删掉那行菜单、那次
+ * 文件夹扫描是同一个：
  *
- *   the copy was UNCONDITIONAL on every launch. It is a development probe, so a
- *   developer deleting probe-mod.jar by hand was normal -- and the next launch
- *   put it back, exactly like the mods the folder scan resurrected. An app that
- *   decides a mod exists, and cannot be told otherwise from inside the game, is
- *   the problem; being a probe does not make it a different problem.
+ *   那次复制在【每次】启动时都是【无条件】的。它是个开发探针，所以开发者手删
+ *   probe-mod.jar 很正常 —— 而下一次启动又把它放回去，和文件夹扫描复活的模组
+ *   一模一样。一个自己认定某个模组存在、并且在游戏内无法被纠正的应用，才是问题
+ *   所在；它是探针并不让它变成另一种问题。
  *
- * ⇒ With this gone the app never writes into the mods directory at all. The only
- *   thing that puts a mod there is the game itself, when the player uses its own
- *   import button.
+ * ⇒ 这个没了之后，应用就再也不往模组目录里写任何东西了。唯一往那里放模组的是游戏
+ *   自己，当玩家用它自带的导入按钮时。
  *
- * ⚠️ tools/probe-mod/ is still in the repository and still builds. What is gone
- *   is the automatic planting -- so a probe-mod.jar left over on a device will
- *   now STAY deleted when it is deleted in the game, which is the point.
+ * ⚠️ tools/probe-mod/ 仍在仓库里，仍然能构建。消失的是【自动种入】—— 所以设备上
+ *   遗留的 probe-mod.jar 现在在游戏里被删掉之后会【保持】被删，这正是重点。
  */
 
-/*
- * Which control scheme the player chose, read by the launcher before the JVM
- * starts.
+/* [A]
+ * 玩家选了哪套操作方案，由启动器在 JVM 启动前读取。
  *
- * Written next to user_dirs.txt deliberately: both are files this side writes in
- * filesDir and the native side reads at startup, and filesDir is the HAP-level
- * directory, NOT the application-level one the IME bridge uses above. Those two
- * directories look similar and are not interchangeable -- a file written to the
- * wrong one is simply never seen, with no error anywhere.
+ * 刻意写在 user_dirs.txt 旁边：两者都是本侧写进 filesDir、原生侧在启动时读的文件，
+ * 而 filesDir 是 HAP 级目录，【不是】上面 IME 桥接所用的应用级目录。这两个目录长得
+ * 像，但不能互换 —— 写错目录的文件就是永远不会被看到，而且哪儿都不会报错。
  */
 const CONTROL_MODE_FILE_NAME = 'control_mode.txt';
 const CONTROL_MODE_MOBILE = 'mobile';
 const CONTROL_MODE_DESKTOP = 'desktop';
 
-/*
- * The floating ball. It exists to host several functions, of which the control
- * scheme is the first, so it opens a menu rather than acting on tap.
+/* [A]
+ * 悬浮球。它的存在是为了承载多个功能，其中操作方案是第一个，所以它点一下是打开
+ * 菜单，而不是直接执行动作。
  *
- * All sizes are vp. Touch coordinates arrive in vp too (TouchObject.windowX/Y are
- * documented as vp), which is also what .position() takes -- so nothing here needs
- * a px2vp conversion. The one place that does is the display size, which the
- * platform reports in px.
+ * 所有尺寸都是 vp。触摸坐标也是 vp 到达的（TouchObject.windowX/Y 文档写明是 vp），
+ * 这也正是 .position() 接受的单位 —— 所以这里没有任何地方需要 px2vp 转换。唯一
+ * 需要转换的是屏幕尺寸，平台以 px 上报它。
  */
-/*
- * Ball size is derived from the window, not fixed.
+/* [A]
+ * 球的大小是从窗口【推导】出来的，不是固定的。
  *
- * A fixed 44vp was measured as too small on this tablet. The size that is right
- * depends on the screen, and the screen's own short edge is the honest input: the
- * ball is a thumb target, and thumb targets scale with the device.
+ * 固定的 44vp 在这台平板上实测太小。合适的尺寸取决于屏幕，而屏幕自身的短边才是
+ * 诚实的输入：球是个拇指目标，拇指目标随设备缩放。
  *
- * Kept as a RATIO OF THE SHORT EDGE rather than a fraction of both dimensions, so a
- * landscape window does not produce a ball wider than a portrait one.
+ * 之所以保留为【短边的比例】而不是两个维度的某个分数，是为了让横屏窗口不会产出
+ * 一个比竖屏更宽的球。
  *
- * The floor is set at 48 rather than at the old 44: 44 is the value that was found
- * too small, so the adaptive formula must never return to it. The ceiling stops a
- * very large display from producing a ball that covers the game.
+ * 下限设为 48 而不是旧的 44：44 就是被发现太小的那个值，所以自适应公式绝不能又
+ * 回到它。上限则阻止一块很大的屏幕产出一个盖住游戏的球。
  */
-const BALL_SIZE_FALLBACK_VP = 48;   /* before onAreaChange has reported anything */
-const BALL_SIZE_RATIO = 0.065;      /* of the window's short edge */
+const BALL_SIZE_FALLBACK_VP = 48;   /* [B] 在 onAreaChange 上报任何数据之前 */
+const BALL_SIZE_RATIO = 0.065;      /* [B] 窗口短边的比例 */
 const BALL_SIZE_MIN_VP = 48;
 const BALL_SIZE_MAX_VP = 76;
-/*
- * How far the ball rests from the edge it has settled against.
+/* [A]
+ * 球停靠在它贴上的那条边时，离边留多远。
  *
- * Applies on all four edges and on every path that settles it -- first placement, a
- * drag, and a position restored from disk -- so the gap does not depend on how the
- * ball got there. It was consulted only for the first placement once, which made a
- * dragged ball sit tangent while an untouched one kept its gap.
+ * 四条边都适用，每一条会安置球的路径也适用 —— 首次摆放、拖动、从磁盘恢复的位置
+ * —— 所以这个间隙不取决于球是怎么到那儿的。它曾经只在首次摆放时被用到，结果被拖动
+ * 过的球贴边相切，而没碰过的球却保留着间隙。
  */
 const BALL_MARGIN_VP = 8;
-/* How far a touch must travel before it counts as a drag rather than a tap. Without
- * this, the slightest finger movement while tapping would be read as a drag and the
- * menu would never open. */
+/* [A] 触摸要移动多远才算拖动而不是点按。没有它，点按时手指最轻微的移动都会被读成
+ * 拖动，菜单就永远打不开。 */
 const BALL_DRAG_SLOP_VP = 8;
 const BALL_MENU_W_VP = 176;
-/*
- * A row's height -- and the reason it is a height at all.
+/* [A]
+ * 一行的高度 —— 以及它为什么是个高度。
  *
- * The rows used to be bare Rows wrapping a Text at fontSize 14, so the tap
- * target was whatever the text happened to measure: about 19 vp. Reported from
- * the device: the options are too small and too close together. A finger cannot
- * reliably hit 19 vp, and the two targets sat roughly a text line apart.
+ * 这些行过去是裸 Row 包一个 fontSize 14 的 Text，所以点击目标就是文本恰好量出来的
+ * 大小：约 19 vp。从设备上报回来：选项太小、也挨得太近。手指没法可靠地打中 19 vp，
+ * 而且两个目标大约只隔一行文字。
  *
- * So the row carries an explicit height and the text is centred inside it by the
- * Row's default alignment. The target is now the row, which is what a player
- * actually aims at, and the spacing falls out of the height rather than being a
- * margin that has to be guessed.
+ * 所以行现在带一个显式高度，文本由 Row 的默认对齐在其中居中。点击目标现在是整行，
+ * 那才是玩家实际瞄准的东西；间距也由高度自然得出，而不是一个需要猜的 margin。
  *
- * 46 was the first attempt and it overcorrected: reported from the device again,
- * the rows are now too far apart and the gap should be about half. 32 keeps the
- * text at 16 vp and roughly halves the whitespace above and below it, which is
- * the part that reads as a gap -- the rows are adjacent, so the space between
- * the two labels IS the padding inside each row. Still well clear of the 19 vp
- * that started this, so the tap target stays usable.
+ * 46 是第一次尝试，它矫枉过正：设备上又报回来，说行现在离得太远、间隙应该大约减半。
+ * 32 让文本保持 16 vp，并把上下留白大致减半，而正是那部分留白被读成「间隙」——
+ * 行是相邻的，所以两个标签之间的空间【就是】每行内部的 padding。它仍然远高于开头
+ * 那个 19 vp，所以点击目标依然好用。
  *
- * BALL_MENU_H_VP is derived from these because ballMenuY clamps against it. It
- * was once a bare 64 -- right for one row, and it would have let a two-row menu
- * hang off the bottom edge, but only when the ball happens to be near it, which
- * is the kind of defect that survives every review that does not put the ball
- * there.
+ * BALL_MENU_H_VP 由这些推导而来，因为 ballMenuY 要拿它做 clamp。它曾是一个光秃秃的
+ * 64 —— 对一行来说没错，但它会让两行的菜单挂出下边缘，只不过仅在球恰好靠近下边缘
+ * 时才发生，而这类缺陷能躲过每一次「没把球放到那儿」的审查。
  */
 const BALL_MENU_ROW_VP = 32;
 const BALL_MENU_DIVIDER_VP = 1;
 const BALL_MENU_PAD_VP = 16;
-/*
- * HOW MANY ROWS THE MENU HAS. Keep this in step with the Rows in build().
+/* [C]
+ * 菜单有多少行。要和 build() 里的 Row 数量保持一致。
  *
- * A named constant because BALL_MENU_H_VP has to match, and the shape of the
- * last mistake here was a height that was right for the count it was written
- * for. Adding a row is now one edit instead of two -- and the one that is easy
- * to forget is the one that is written down.
+ * 之所以是个具名常量，是因为 BALL_MENU_H_VP 必须与之匹配，而这里上一次错误的形态
+ * 就是一个「对它写定时那个行数而言正确」的高度。现在加一行是一处改动而不是两处 ——
+ * 而容易忘的那一处，正是被写下来的那一处。
  *
- * ⚠️ IT HAS BEEN 3 AND IS NOW 2, because the "导入模组" row was removed. That is
- * exactly the two-edit change this constant exists to force: leaving it at 3
- * would have reserved a row's height that is not drawn, and the menu would hang
- * that much lower than it needs to.
+ * ⚠️ 它曾是 3，现在是 2，因为 "导入模组" 那一行被删掉了。这正是这个常量存在所要
+ * 强制的两处改动：把它留在 3 会保留一行并不绘制的高度，菜单就会比需要的低那么多。
  */
-const BALL_MENU_ROWS = 3;   /* verified on the tablet as a 3-row card, 2026-09-23 */
+const BALL_MENU_ROWS = 3;   /* [B] 2026-09-23 在平板上确认为 3 行卡片 */
 const BALL_MENU_H_VP = BALL_MENU_ROWS * BALL_MENU_ROW_VP
                      + (BALL_MENU_ROWS - 1) * BALL_MENU_DIVIDER_VP
                      + BALL_MENU_PAD_VP;
-/* One size for both the label and its hint, so the two rows cannot drift apart. */
+/* [C] 标签和它的提示共用同一个尺寸，这样两行不会彼此漂移。 */
 const BALL_MENU_FONT_VP = 16;
 const BALL_MENU_HINT_FONT_VP = 14;
 
-/*
- * Auto half-hide.
+/* [A]
+ * 自动半隐藏。
  *
- * After the ball has settled against an edge it slides that much further outward so
- * only the remainder is still on screen, and drops to a lower opacity -- it should
- * stop competing with the game for attention while remaining findable.
+ * 球在贴上某条边之后，会再向外滑出这么多，让只有剩余部分还留在屏幕上，同时降到
+ * 更低的透明度 —— 它应当不再和游戏争抢注意力，但仍能被找到。
  *
- * 0.6 hides about three fifths of the ball, as asked for, leaving the outer 40%.
- * Around 26vp of the ~66vp ball is still on screen at this tablet's density.
+ * 0.6 按要求隐藏了大约五分之三的球，留下外侧 40%。在这台平板的密度下，约 66vp 的
+ * 球仍有约 26vp 在屏幕上。
  *
- * That strip is the whole of the target, so this is the value that trades visibility
- * against being findable. It is workable because the tap that brings the ball back
- * only has to LAND on the strip, not be aimed at it -- and because that first tap now
- * only reveals (the menu needs a second tap), a mis-hit costs nothing but a repeat.
- * Raise this to hide more; it is the knob.
+ * 那条窄边就是全部的目标区，所以这就是那个在「可见性」和「可找到」之间做取舍的值。
+ * 它可行，是因为把球弄回来的那次点击【只需要落在】那条窄边上，而不必瞄准它 —— 也
+ * 因为那第一次点击现在只是「露出」（菜单需要点第二次），打偏的代价不过就是再来一下。
+ * 调大它就隐藏得更多；它就是那个旋钮。
  */
 const BALL_HIDE_MS = 3000;
 const BALL_HIDE_FRACTION = 0.6;
 const BALL_OPACITY_HIDDEN = 0.45;
 
-/*
- * Where the ball was last parked. One line, "x,y", absolute vp.
+/* [A]
+ * 球上次停在哪。一行，"x,y"，绝对 vp。
  *
- * Absolute rather than "which edge plus a fraction" because the position is clamped
- * into the current window on restore, and a ball parked at the right edge of a wider
- * window clamps back to the right edge of a narrower one -- so the common case of a
- * changed window size corrects itself without storing anything extra.
+ * 用绝对值而不是「哪条边加一个比例」，是因为位置在恢复时会被 clamp 进当前窗口，
+ * 而一个停在更宽窗口右边缘的球会被 clamp 回更窄窗口的右边缘 —— 所以「窗口尺寸变了」
+ * 这个常见情况会自己纠正，无需额外存任何东西。
  *
- * Lives beside control_mode.txt in the module filesDir. NOT the application-level
- * directory the IME bridge uses: those two look alike and a file written to the wrong
- * one is never seen, with no error anywhere.
+ * 它和 control_mode.txt 一起放在模块的 filesDir 里。【不是】IME 桥接所用的那个
+ * 应用级目录：两者长得像，写错目录的文件永远不会被看到，而且哪儿都不报错。
  */
 const BALL_POS_FILE_NAME = 'ball_pos.txt';
 
-/*
- * How long the game's request is ignored after the user puts the keyboard away.
+/* [B]
+ * 用户收起键盘之后，忽略游戏请求的时长。
  *
- * Long enough for the forwarded ESC to reach the game and for the game to close
- * its dialog -- at which point the request stops on its own and this never
- * matters. Short enough that it cannot strand anyone.
+ * 长到足够让转发出去的 ESC 抵达游戏、并让游戏关掉它的对话框 —— 到那时请求会自行
+ * 停止，这个值也就无所谓了。短到不会把任何人困住。
  */
 const IME_DISMISS_MS = 1500;
 
-/*
- * Extra height given to the invisible field, over and above the game's own field,
- * and ONLY while the keyboard is up.
+/* [A]
+ * 给隐形文本框额外增加的高度，加在游戏自身文本框之上，且【只在】键盘弹起时。
  *
- * Why it exists: the framework pushes the page up only until the focused field is
- * visible, so this is the only lever for keeping the game's field from ending up
- * flush against the keyboard's top edge.
+ * 它为什么存在：框架只会把页面上推到聚焦文本框可见为止，所以这是避免游戏文本框
+ * 紧贴键盘上边缘的唯一杠杆。
  *
- * Why it is conditional, which is the part that took two tries to get right.
+ * 它为什么是有条件的 —— 这正是花了两次才做对的部分。
  *
- * The margin grows DOWNWARD -- the box is anchored top-left and simply made
- * taller -- so it also covers whatever Mindustry draws below a text field, which
- * on the export dialog is Cancel. Reaching Cancel therefore meant moving the focus
- * away first: that made the game drop the field, which unmounted our box, and only
- * then did the tap land on Cancel.
+ * 这个 margin 是【向下】长的 —— 盒子锚在左上角，只是被加高 —— 所以它也会盖住
+ * Mindustry 在文本框下方画的东西，而在导出对话框上那是 Cancel。所以要够到 Cancel
+ * 就得先把焦点移开：那会让游戏丢掉文本框，从而卸载我们的盒子，只有这时点击才落到
+ * Cancel 上。
  *
- * Moving the overhang upward instead was tried and is WRONG, and it is worth
- * recording why, because the mistake was arithmetic rather than judgement. With
- * `y = fieldY - 24` and `h = fieldH + 24` the box's BOTTOM edge lands on
- * `fieldY + fieldH`, not on `fieldY + fieldH + 24` -- it moves up by the margin.
- * The bottom edge is exactly what the framework's avoidance has to clear, so the
- * page was pushed 24vp too little and the keyboard covered Cancel and Enter.
+ * 把这块外伸改向上试过，是【错的】，值得记下为什么，因为这个错误是算术层面的，不是
+ * 判断层面的。用 `y = fieldY - 24` 和 `h = fieldH + 24`，盒子的【下】边缘落在
+ * `fieldY + fieldH`，而不是 `fieldY + fieldH + 24` —— 它整体上移了一个 margin。
+ * 下边缘恰恰是框架避让必须让开的东西，所以页面少被推了 24vp，键盘盖住了 Cancel
+ * 和 Enter。
  *
- * So the margin stays at the bottom, and is dropped only when the user has hidden
- * the keyboard -- at which point there is nothing for the page to clear and the
- * taller box is pure obstruction. With it dropped, the box is exactly the game's
- * field: a tap on the field still raises the keyboard again, and a tap on Cancel
- * reaches the game.
+ * 所以 margin 留在底部，只在用户收起键盘时才去掉 —— 那时页面没有什么需要让开，
+ * 这个更高的盒子就纯属碍事。去掉它之后，盒子就正好是游戏的文本框：点文本框仍会
+ * 再次唤起键盘，点 Cancel 也能到游戏。
  */
 const IME_FIELD_MARGIN_VP = 24;
 
@@ -516,109 +483,109 @@ const IME_FIELD_MARGIN_VP = 24;
 @Component
 struct Index {
   @State showIme: boolean = false;
-  /*
-   * What the game's text field is believed to hold. The native side feeds this
-   * copy through SDL_SendKeyboardText, so the two start empty together and only
-   * ever move by what is sent below.
+  /* [B]
+   * 游戏文本框被认为装着的内容。原生侧通过 SDL_SendKeyboardText 喂这个副本，所以
+   * 两者一起从空开始，且只会随下面发送的内容变化。
    */
   private imeSent: string = '';
   private imeTimer: number = -1;
   private imeFieldFocused: boolean = false;
-  /*
-   * The user put the keyboard away, and it must stay away until they ask for it
-   * again -- even though the GAME is still asking for text the whole time.
+  /* [A]
+   * 用户把键盘收起来了，它必须一直收着，直到用户再次要求 —— 尽管游戏【全程】都还在
+   * 要文本。
    *
-   * `ime_want` cannot answer this: it reports what the game wants, and the game
-   * never learns the user hid the keyboard, because its own field is still
-   * focused and SDL therefore never calls HideScreenKeyboard. So the poll has to
-   * carry the distinction itself. See the onBlur handler for how it is set and
-   * the `want` branch of pollImeWant for how it is cleared.
+   * `ime_want` 回答不了这个：它报告的是游戏想要什么，而游戏永远不会知道用户把键盘
+   * 藏了，因为它自己的文本框仍然聚焦，所以 SDL 从不调用 HideScreenKeyboard。于是
+   * 这个区分只能由轮询自己带着。它如何被置位见 onBlur 处理器，如何被清除见
+   * pollImeWant 的 `want` 分支。
    */
   @State imeUserHid: boolean = false;
-  /*
-   * Until when the game's request is ignored, having just been put away by the
-   * user. Without it the game's continued request reopened what the user had
-   * just closed.
+  /* [A]
+   * 忽略游戏请求的截止时间，因为用户刚刚把它收起来了。没有它，游戏持续不断的请求
+   * 会重新打开用户刚刚关掉的东西。
    *
-   * A DEADLINE, not a latch, and that distinction is the whole point. The game's
-   * dialog, while it stays up, keeps its text field focused and therefore keeps
-   * asking -- it sends no new request that could ever clear a latch. So a latch
-   * would strand a user whose ESC did not close the dialog: no keyboard, and no
-   * way to ask for one. A deadline always lets the keyboard back.
+   * 这是一个【截止时间】，不是锁存器，而这个区别就是全部要点。游戏的对话框只要还
+   * 开着，就保持着文本框聚焦，因此一直在要 —— 它不会发出任何能清除锁存器的新请求。
+   * 所以锁存器会把一个 ESC 没能关掉对话框的用户困死：没键盘，也没办法要一个。截止
+   * 时间则总会把键盘放回来。
    */
   private imeDismissedUntil: number = 0;
-  /*
-   * The game's text field, in game pixels, so our invisible field can be placed
-   * over it. Values already in vp, because that is what .position() takes and
-   * converting once at read time keeps the render path free of arithmetic.
+  /* [B]
+   * 游戏的文本框，以游戏像素计，好让我们的隐形文本框盖到它上面。值已经是 vp，因为
+   * 那是 .position() 接受的单位，而在读取时转换一次就能让渲染路径不含算术。
    */
   @State imeFieldX: number = 0;
   @State imeFieldY: number = 0;
   @State imeFieldW: number = 1;
   @State imeFieldH: number = 1;
-  /* Held so the avoid-area listener can be removed when the page goes away. */
+  /* [B] 持有它，以便页面销毁时能移除 avoid-area 监听。 */
   private imeWindow: window.Window | undefined = undefined;
-  /* The control scheme currently recorded on disk. Shown on the switch so the
-   * player can tell which one is in force, since the change only takes effect
-   * on the next launch. */
+  /* [B] 当前记录在磁盘上的操作方案。显示在开关上，好让玩家看出正生效的是哪一套，
+   * 因为改动要到下次启动才生效。 */
   @State controlMode: string = CONTROL_MODE_MOBILE;
-  /*
-   * Where the ball is, and whether its menu is open.
+  /* [A]
+   * 球在哪，以及它的菜单是否打开。
    *
-   * ballPlaced exists because the ball cannot be positioned before the window size
-   * is known: it starts at the right edge, and until onAreaChange has reported a
-   * width that would put it at x=0. Placement happens once, on the first size
-   * report, and the player's chosen position is never overwritten afterwards.
+   * ballPlaced 之所以存在，是因为在窗口尺寸已知之前球无法定位：它从右边缘开始，
+   * 而在 onAreaChange 上报一个宽度之前，那会把它放到 x=0。摆放只发生一次，在第一次
+   * 尺寸上报时，之后玩家选定的位置永远不会被覆盖。
    */
   @State ballX: number = 0;
   @State ballY: number = 0;
   @State ballPlaced: boolean = false;
   @State ballMenu: boolean = false;
 
-  /* The About overlay, and the version it shows. The version is READ FROM THE
-   * BUNDLE rather than written down here: this project has already been bitten
-   * once by a hand-copied version (artifactName in build-profile.json5), and a
-   * second copy would drift in exactly the same way. */
+  /* [A] About 覆盖层，以及它显示的版本号。版本号是从【包】里读的，而不是写在这里：
+   * 本项目已经被一个手工抄写的版本号坑过一次（build-profile.json5 里的
+   * artifactName），再来一份副本会以完全相同的方式漂移。 */
   @State showAbout: boolean = false;
+
+  /** [A] 设置一次，在 XComponent 存在之前：见 aboutToAppear。 */
+  @State shieldBlocked: boolean = false;
+  /* [B] Kit 的原始答案：'on' / 'off' / 'no-lib: ...' / 'no-sym: ...' / 'mode=N'。 */
+  @State shieldDiag: string = '';
+  /* [A] 当刚才跑过的探测说内存【不】可用时为真。它就是那道闸门：没有它，硬着头皮
+   * 点过提示只会让进程再死一次，而且什么都不显示。 */
+  @State execProbeFailed: boolean = false;
+  /* [B] 上一次启动的临终遗言，在它的日志还存在时捕获。 */
+  @State jvmFaults: string = '';
+  /** [B] 启动器留下了它那个「JVM 正在创建」的标记。 */
+  @State jvmIncomplete: boolean = false;
   @State appVersion: string = '';
 
-  /* No compatibility-notice state any more: the notice is gone. See the header
-   * comment for why, and RELEASE-MAINTENANCE.md 2.13b for the text it used to
-   * show. `compatMode` went with it -- a field nothing reads is not a record of
-   * anything. */
-  /*
-   * Ball diameter, recomputed from the window. A @State field rather than a getter
-   * because the render reads it: a plain field derived from winW/winH would change
-   * without the component ever being told to re-render.
+  /* [B] 不再有兼容性提示的状态：那个提示已经没了。为什么见文件头注释，它过去显示的
+   * 文字见 RELEASE-MAINTENANCE.md 2.13b。`compatMode` 也随它一起去掉了 —— 一个
+   * 没人读的字段不记录任何东西。 */
+  /* [A]
+   * 球的直径，从窗口重新计算。用 @State 字段而不是 getter，因为渲染要读它：一个由
+   * winW/winH 推导出的普通字段会变化，而组件永远不会被通知重新渲染。
    */
   @State ballSizeVp: number = BALL_SIZE_FALLBACK_VP;
-  /*
-   * Whether the ball is currently slid out past the edge.
+  /* [A]
+   * 球当前是否滑出到了边缘之外。
    *
-   * This is a RENDER-TIME offset only -- ballX/ballY always hold the revealed
-   * position. That is the load-bearing choice: dragging, clamping, snapping and
-   * persistence all keep working on one set of coordinates, and hiding cannot drift
-   * them. The alternative (moving ballX itself) would make every one of those
-   * features rediscover where the ball "really" is.
+   * 这【只】是一个渲染期的偏移量 —— ballX/ballY 始终保存着「露出」的位置。这是那个
+   * 承重的选择：拖动、clamp、吸附和持久化都继续在同一套坐标上工作，隐藏无法让它们
+   * 漂移。另一种做法（移动 ballX 本身）会让上面每一个功能都得重新去弄清球「真正」
+   * 在哪。
    */
   @State ballHidden: boolean = false;
-  /* Which edge it last snapped to, so the hide slides the right way. */
+  /* [B] 它上次吸附到哪条边，好让隐藏朝正确的方向滑。 */
   private ballEdge: string = 'right';
   private ballHideTimer: number = -1;
-  /*
-   * A position read from disk, held until the window size is known.
+  /* [B]
+   * 从磁盘读到的位置，一直留到窗口尺寸已知。
    *
-   * It cannot be applied at read time: the value has to be clamped against the
-   * window, and onAreaChange has not reported one yet. -1 means "nothing stored".
+   * 它不能在读取时就应用：这个值需要对着窗口做 clamp，而 onAreaChange 还没上报过
+   * 一个。-1 表示「什么都没存」。
    */
   private ballRestoreX: number = -1;
   private ballRestoreY: number = -1;
-  /* Whether the ball was half-hidden at the moment of touch-down. See onBallTouch. */
+  /* [B] 按下那一刻球是否是半隐藏的。见 onBallTouch。 */
   private ballWasHiddenOnDown: boolean = false;
   private winW: number = 0;
   private winH: number = 0;
-  /* Anchor for a drag: the ball's position and the finger's position when the touch
-   * began, so the ball does not jump to centre itself under the finger. */
+  /* [B] 拖动的锚点：触摸开始时球的位置和手指的位置，这样球不会跳到手指底下居中。 */
   private dragBallX: number = 0;
   private dragBallY: number = 0;
   private dragTouchX: number = 0;
@@ -627,103 +594,86 @@ struct Index {
 
   aboutToAppear(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
-    /*
-     * The permission request goes out over an ordinary window, so the immersive
-     * switch is chained onto it rather than started beside it.
+    /* [A]
+     * 权限请求走的是一个普通窗口，所以沉浸式切换是【串】在它后面，而不是和它并行
+     * 启动。
      *
-     * requestPerms() is async and its first statement awaits
-     * bundleManager.getBundleInfoForSelf(), so everything below runs during that
-     * await. enterImmersive() takes the system bars away and sets the layout
-     * full-screen -- and a system permission dialog belongs on an ordinary
-     * window, not on one that has just become full-screen and barless.
+     * requestPerms() 是异步的，它的第一条语句 await
+     * bundleManager.getBundleInfoForSelf()，所以下面的一切都在那次 await 期间运行。
+     * enterImmersive() 会把系统栏拿走、把布局设为全屏 —— 而系统权限对话框属于一个
+     * 普通窗口，不属于一个刚刚变成全屏、没有栏的窗口。
      *
-     * ⚠️ THIS IS A PRECAUTION, NOT A DIAGNOSIS. It was written as a diagnosis
-     * first, on the theory that the immersive switch was why
-     * requestPermissionsFromUser() comes back unfulfilled on the phone --
-     * and the very next launch refuted it. Same input, same output:
+     * ⚠️ 这是一种【预防措施】，不是【诊断】。它最初是当作诊断写的，理论是「沉浸式
+     * 切换就是手机上 requestPermissionsFromUser() 返回未完成的原因」—— 而下一次
+     * 启动就否证了它。相同的输入，相同的输出：
      *
      *     permission request: ... -> auth=2 dialogShown=true errorReason=0
      *     immersive: bars hidden, layout full-screen
      *
-     * with the two lines now in that order. So the ordering is fixed and the
-     * result did not change, which means the cause is elsewhere. What the
-     * comment must NOT do is keep asserting a story the measurement killed --
-     * that is how a false explanation gets inherited by the next reader.
+     * 只是两行的顺序变成了这样。所以顺序固定了、结果却没变，这意味着原因在别处。
+     * 这段注释【不能】做的，就是继续主张一个已被测量杀死的说法 —— 那正是让一个错误
+     * 解释被下一个读者继承的路子。
      *
-     * The ordering is kept because it is right on its own terms: asking for a
-     * permission over a normal window is what the API expects, and the cost is
-     * that the bars stay up for one round trip on first launch.
+     * 顺序得以保留，是因为它本身是对的：在一个正常窗口上申请权限才是 API 期望的
+     * 做法，代价只是首启时系统栏会多留一个往返的时间。
      */
     requestPerms(ctx).then(() => {
       this.enterImmersive();
     }).catch((e: BusinessError) => {
-      /* requestPerms has its own try/catch and should not reject; if it ever
-       * does, the bars must still go away. */
+      /* [B] requestPerms 有自己的 try/catch，本不该 reject；万一真 reject 了，
+       * 系统栏仍然必须走掉。 */
       hilog.warn(DOMAIN, TAG,
                  'permissions: unexpected rejection (%{public}s); immersive anyway',
                  e.message);
       this.enterImmersive();
     });
-    /*
-     * The app's folder in Downloads, created here rather than in the ability.
+    /* [A]
+     * 应用在 Downloads 里的文件夹，在这里创建，而不是在 ability 里。
      *
-     * HERE because this is where a UI window exists. Measured: the same DOWNLOAD
-     * -mode call succeeds from a menu tap and fails with 13900042 when made from
-     * EntryAbility.onCreate, on both devices -- so it needs a window even though
-     * it shows no dialog.
+     * 【在这里】是因为这里才有 UI 窗口。实测：同一个 DOWNLOAD 模式的调用，从菜单
+     * 点击发起能成功，从 EntryAbility.onCreate 发起则报 13900042 失败，两台设备都
+     * 如此 —— 所以哪怕它不弹对话框，也需要一个窗口。
      *
-     * Checked and recreated every launch, so a folder the player deleted comes
-     * back. Runs after requestPerms() has been STARTED above but not awaited:
-     * the picker mode needs no permission, so there is nothing to wait for.
+     * 每次启动都检查并重建，所以玩家删掉的文件夹会回来。它跑在上面 requestPerms()
+     * 已被【启动】但未被 await 之后：picker 模式不需要权限，所以没什么可等的。
      *
-     * ⚠️ WHAT THIS FOLDER IS FOR HAS CHANGED, and the function name has not kept
-     * up -- it is still ensureModFolder / mod_folder on disk. It used to be a
-     * staging area whose contents were swept into the game's mods directory at
-     * every launch, and it is now purely the directory the game's own file
-     * browser opens in: EntryAbility writes its path to user_dirs.txt, the
-     * launcher passes it as -Darc.sdl.chooserPath, and that is what makes
-     * "import mod" and save import/export open somewhere the player can reach.
+     * ⚠️ 这个文件夹的【用途】已经变了，而函数名没跟上 —— 磁盘上仍然是
+     * ensureModFolder / mod_folder。它过去是一个暂存区，其中内容会在每次启动时被
+     * 扫进游戏的模组目录；现在它纯粹是游戏自带文件浏览器打开时所在的目录：
+     * EntryAbility 把它的路径写进 user_dirs.txt，启动器把它作为 -Darc.sdl.chooserPath
+     * 传进去，这才让「导入模组」和存档的导入/导出打开在玩家够得到的地方。
      *
-     * ⇒ Nothing reads its contents any more. A file dropped in it is reachable
-     *   through the game's browser and has to be PICKED there; it is no longer
-     *   taken. That is the fix for a mod being resurrected after being deleted in
-     *   the game, and for a save (.zip) being swept into the mods directory as
-     *   though it were a mod.
+     * ⇒ 已经没有任何东西读它的内容了。丢进其中的文件可以通过游戏的浏览器够到，
+     *   但必须在【那里选中】；它不再会被自动取走。这就是「模组在游戏里被删掉后又被
+     *   复活」的修复，也是「存档（.zip）像一个模组那样被扫进模组目录」的修复。
      */
     ensureModFolder(ctx, ctx.filesDir + '/mod_folder')
       .then(() => {
-        /*
-         * The bridge is written AGAIN here, and that is the fix for the file
-         * browser opening in the wrong place.
+        /* [A]
+         * 桥接文件在这里【再写一次】，这就是「文件浏览器打开在错误位置」的修复。
          *
-         * writeUserDirs runs in the ability's onCreate, which is BEFORE this --
-         * and the folder is made here, because the DOWNLOAD-mode picker needs a
-         * window. So on the first launch after an install or an uninstall the
-         * bridge has no `mods=` line, and the launcher used to fall back to the
-         * plain Download directory -- which it MEASURES as unreadable
-         * ("download NOT READABLE errno=1"), so the browser opened on nothing.
+         * writeUserDirs 在 ability 的 onCreate 里运行，早于这里 —— 而文件夹是在这
+         * 里创建的，因为 DOWNLOAD 模式的 picker 需要一个窗口。所以在一次安装或卸载
+         * 之后的首次启动上，桥接文件没有 `mods=` 这一行，而启动器过去会退回用普通的
+         * Download 目录 —— 它【测出】那个目录不可读（"download NOT READABLE
+         * errno=1"），于是浏览器打开在一片虚无上。
          *
-         * Rewriting once the folder is known fixes that launch whenever this
-         * beats the launcher's read, and is harmless when it does not. The
-         * launcher reads the file when SDL_main starts, i.e. when the XComponent
-         * mounts, which is after aboutToAppear -- so the write is normally in
-         * time. There is no attempt to guarantee it: a lost race costs one
-         * launch with the browser in the sandbox, and the next launch is right
-         * regardless.
+         * 在文件夹已知之后再写一次，只要这次写抢在启动器读取之前，就修好了那次启动；
+         * 抢不到也无害。启动器在 SDL_main 启动时读这个文件，也就是 XComponent 挂载
+         * 时，那在 aboutToAppear 之后 —— 所以这次写通常来得及。并不试图保证它：抢输
+         * 一次的代价是那一次启动里浏览器待在沙箱中，而下次启动无论如何都是对的。
          */
         writeUserDirs(ctx.filesDir);
-        /*
-         * Second half of the crash-report export, and it belongs exactly here.
+        /* [A]
+         * 崩溃报告导出的后半段，它恰好就该在这里。
          *
-         * The crash itself was captured in the ability's onCreate, because it has
-         * to be read before native code unlinks it. It could not be WRITTEN to
-         * Downloads there: on the phone that folder is only reachable through
-         * the DOWNLOAD-mode picker's grant, and the picker needs a window -- the
-         * same constraint that puts the folder's creation on this page.
+         * 崩溃本身是在 ability 的 onCreate 里捕获的，因为必须在原生代码 unlink 它
+         * 之前读取。那时它无法被【写入】Downloads：在手机上那个文件夹只能通过
+         * DOWNLOAD 模式 picker 的授权够到，而 picker 需要一个窗口 —— 和把文件夹的
+         * 创建放到本页是同一个约束。
          *
-         * So: capture early, publish once the folder is known-good. The publish
-         * is idempotent (named after the crash, skipped if present) and does
-         * nothing at all when there was no crash, which is the normal case.
+         * 所以：尽早捕获，等文件夹确认可用后再发布。发布是幂等的（以崩溃命名，已存在
+         * 就跳过），而且在没有崩溃时什么都不做 —— 那是正常情况。
          */
         publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
       })
@@ -731,74 +681,122 @@ struct Index {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
       });
     this.clearStaleImeState();
-    /*
-     * Poll rather than be notified: the request is made by native code in the
-     * other copy of libSDL3.so, which cannot call into this page. A file is the
-     * only channel the two share, and this reuses the mechanism the exit
-     * handshake already uses.
+    /* [A]
+     * 用轮询而不是等通知：这个请求是另一份 libSDL3.so 里的原生代码发出的，它无法
+     * 调进本页。文件是两者唯一的共用通道，而这里复用的正是退出握手已经在用的机制。
      */
     this.imeTimer = setInterval(() => { this.pollImeWant(); }, 200);
     this.watchKeyboardHeight();
     this.readControlMode();
-    /* Held, not applied: the value needs a window size to clamp against, and
-     * onAreaChange has not reported one yet. */
+    /* [B] 只是持有，不应用：这个值需要窗口尺寸来做 clamp，而 onAreaChange 还没上报
+     * 过。 */
     this.readBallPos();
-    /*
-     * Before the XComponent exists: see the note on setupCompatMode. It writes the
-     * options file the launcher reads, and the launcher reads it as soon as
-     * SDL_main starts, which is when the XComponent mounts.
+
+
+
+    /* [A]
+     * 【无条件】记录日志，包括答案是 "off" 的时候。
+     *
+     * 上一个版本只在坚盾开启时才记日志，这让它自己的正确性无法验证：「闸门没有触发」
+     * 也正好是「库加载失败」「符号不存在」「方法从未运行」三者都会产生的现象。一个
+     * 决定必须报告它据以做出的输入，否则它没有产生效果这件事什么都证明不了。
+     */
+    try {
+      this.shieldDiag = shield.shieldDiagnosis();
+    } catch (e) {
+      const err = e as BusinessError;
+      this.shieldDiag = 'call-failed: ' + err.message;
+    }
+    this.shieldBlocked = (this.shieldDiag === 'on');
+    this.recheckExecMemory();
+    hilog.info(DOMAIN, TAG, 'shield diagnosis: %{public}s -> blocked=%{public}s',
+      this.shieldDiag, String(this.shieldBlocked));
+
+    /* [A]
+     * 标记还在这里，意味着【上一次】启动停在了 JVM 创建内部 —— 这是唯一一种不留
+     * 日志、不留 faultlog、也没有返回码的失败。
+     *
+     * 它【不是】一道闸门，这个区分就是整个设计。玩家被告知，然后自己选择；一个残留
+     * 物从不自作主张。
+     */
+    try {
+      this.jvmIncomplete = fs.accessSync(JVM_INCOMPLETE_FILE);
+      if (this.jvmIncomplete) {
+        /* [A] 【先】读证据，在标记被清除之前，也在原生 main() 把证据来源的日志
+         * 截断之前。 */
+        const parts: Array<string> = [];
+        const probe: string = logLine('mmap(RWX) FAILED');
+        if (probe !== '') { parts.push(probe); }
+        const forced: string = logLine('FORCING -Xint');
+        if (forced !== '') { parts.push(forced); }
+        const called: string = logLine('calling JNI_CreateJavaVM');
+        if (called !== '') { parts.push(called); }
+        if (logLine('CreateJavaVM (strict) returned') === '') {
+          /* [A] 这个标记存在的全部理由：create() 进去了就没回来，所以既没有返回码，
+           * 也没有 faultlog。 */
+          parts.push('(no return value -- the process died inside create)');
+        }
+        const verdict: string = launcherExecMemoryVerdict();
+        parts.push('execmem: ' + (verdict === '' ? '(not measured)' : verdict));
+        parts.push('shield now: ' + this.shieldDiag);
+        this.jvmFaults = parts.join(String.fromCharCode(10));
+        try {
+          fs.unlinkSync(JVM_INCOMPLETE_FILE);
+        } catch (e) {
+          /* [B] 删不掉它 —— 代价只是下次启动多一个提示，不是启动失败。绝不能让这个
+           * 挡住应用。 */
+        }
+      }
+    } catch (e) {
+      this.jvmIncomplete = false;
+    }
+
+    /* [A]
+     * 在 XComponent 存在之前：见 setupCompatMode 上的说明。它会写出启动器要读的
+     * 选项文件，而启动器在 SDL_main 一启动时就读它，那正是 XComponent 挂载的时候。
      */
     this.setupCompatMode();
-    /* seedProbeMod() used to be called here, to plant probe-mod.jar before the
-     * game scanned the mods directory. Removed -- nothing this app runs now
-     * writes into that directory. See the note where it used to be defined. */
+    /* [A] 这里【曾经】调用 seedProbeMod()，在游戏扫描模组目录之前种下 probe-mod.jar。
+     * 已删除 —— 现在这个应用跑的任何东西都不再写入那个目录。见它原先定义处的说明。 */
   }
 
-  /*
-   * Take the status bar and the navigation bar off the screen.
+  /* [A]
+   * 把状态栏和导航栏从屏幕上拿掉。
    *
-   * WHY THIS IS A BUG FIX AND NOT A FLOURISH
-   *   The ball half-hides by sliding past the window edge. On the left and right that
-   *   is a real screen edge, so it works. On the top and bottom the ball only slides
-   *   into the strip the system bars occupy -- which is still visible, so the ball
-   *   stays on screen and the hiding visibly does nothing. Reported from the device.
+   * 为什么这是修 bug，而不是锦上添花
+   *   球的半隐藏方式是滑出窗口边缘。在左右两侧那是真实的屏幕边缘，所以有效。在上下
+   *   两侧，球只是滑进了系统栏占据的那条带里 —— 那条带仍然可见，于是球还留在屏幕上，
+   *   隐藏看起来毫无作用。设备上报了这个现象。
    *
-   *   With the bars gone, y=0 is the physical top of the display and sliding upward
-   *   really does take the ball off it.
+   *   系统栏没了之后，y=0 就是显示器的物理顶端，向上滑就真的把球移出屏幕了。
    *
-   * WHY THE BARS CAN JUST GO
-   *   They are the platform's chrome, not the game's. Mindustry draws its own
-   *   full-screen UI, this app has no controls of its own in that strip, and the bars
-   *   cost a band of the game at all times.
+   * 为什么这些栏可以直接拿掉
+   *   它们是平台的装饰，不是游戏的。Mindustry 自己画全屏 UI，本应用在那条带里没有
+   *   自己的控件，而这些栏在所有时刻都占掉游戏的一条。
    *
-   * WHAT IS DELIBERATELY NOT DONE
-   *   The system's back and home GESTURES are not suppressed. Hiding the bars must not
-   *   strand the player inside the app: not being able to get out is far worse than a
-   *   visible bar. Only the bars are removed.
+   * 刻意【没有】做的事
+   *   系统的手势返回和回到桌面【没有】被屏蔽。隐藏这些栏绝不能把玩家困在应用里：
+   *   出不去远比一条可见的栏糟糕。只移除了栏本身。
    *
-   * THE ONE WARNING THIS FILE ACCEPTS
-   *   setWindowSystemBarEnable([]) compiles to "This API is unavailable to 2in1", and
-   *   this app does declare 2in1 among its device types, so that warning is about a
-   *   real gap rather than noise -- on a PC these bars would stay put.
+   * 本文件接受的唯一一条警告
+   *   setWindowSystemBarEnable([]) 会编译出 "This API is unavailable to 2in1"，而
+   *   本应用确实在设备类型里声明了 2in1，所以这条警告说的是一个真实的缺口，不是噪音
+   *   —— 在 PC 上这些栏会原地不动。
    *
-   *   The per-bar form, setSpecificSystemBarEnabled, was tried first on the theory that
-   *   it would avoid the warning. It does not; it carries the same 2in1 restriction and
-   *   costs TWO warnings instead of one for the same coverage. So the one-call form is
-   *   kept, and the warning is accepted knowingly.
+   *   逐条栏的形式 setSpecificSystemBarEnabled 先试过，理论是它能避开这条警告。它
+   *   不能；它带有同样的 2in1 限制，而且同样的覆盖面下代价是【两】条警告而不是一条。
+   *   所以保留了单次调用的形式，并且明知故犯地接受这条警告。
    *
-   *   The 2in1 case is survivable: the call is guarded, so on a PC it fails quietly and
-   *   the layout below still goes full-screen. Tablet and phone -- what this is being
-   *   built and tested on -- are unaffected.
+   *   2in1 这种情形是可以承受的：调用有守卫，所以在 PC 上它会安静地失败，下面的布局
+   *   仍然会变全屏。平板和手机 —— 本项目构建和测试所用的 —— 不受影响。
    *
-   * WHY THE PAGE IS ALSO TOLD TO GO FULL-SCREEN
-   *   Hiding the bars alone leaves the layout still reserving their strip, so the ball
-   *   would have somewhere visible to hide into and the defect would remain. The two
-   *   jobs are separate and both are needed.
+   * 为什么还要让页面进入全屏
+   *   只隐藏这些栏，布局仍会保留它们那条带，那么球就还有一块可见的地方可藏，缺陷依旧。
+   *   这两件事是分开的，两件都需要。
    *
-   * FAILURE IS SURVIVABLE
-   *   Everything is guarded and a failure is logged rather than thrown. Not being
-   *   immersive is exactly the state this app shipped in until now, so there is
-   *   nothing here worth failing to start over.
+   * 失败是可以承受的
+   *   一切都有守卫，失败是记日志而不是抛出。不沉浸正是本应用直到现在发布时所处的
+   *   状态，所以这里没有任何值得为它启动失败的东西。
    */
   async enterImmersive(): Promise<void> {
     try {
@@ -807,7 +805,7 @@ struct Index {
         return;
       }
       const win: window.Window = await window.getLastWindow(ctx);
-      await win.setWindowSystemBarEnable([]);   /* an empty list means neither bar */
+      await win.setWindowSystemBarEnable([]);   /* [B] 空列表表示两条栏都不要 */
       await win.setWindowLayoutFullScreen(true);
       win.setImmersiveModeEnabledState(true);
       hilog.info(DOMAIN, TAG, 'immersive: bars hidden, layout full-screen');
@@ -817,9 +815,9 @@ struct Index {
                  'immersive: not available (%{public}s) -- keeping the bars', err.message);
       return;
     }
-    /*
-     * Read back separately, in its own guard: this is a measurement, and a throw here
-     * would be reported as "immersive unavailable" when the calls above succeeded.
+    /* [A]
+     * 单独读回，放在它自己的守卫里：这是一次测量，而这里抛异常会被报成「沉浸式不可
+     * 用」，可上面的调用明明成功了。
      */
     try {
       const ctx: common.UIAbilityContext | undefined = this.ballCtx();
@@ -835,32 +833,28 @@ struct Index {
     }
   }
 
-  /*
-   * Report how tall the keyboard is, next to where the game's field is.
+  /* [A]
+   * 在游戏的文本框位置旁边，报告键盘有多高。
    *
-   * This is the measurement the whole approach turns on. The framework moves the
-   * page only until the focused field is visible, so the question is whether the
-   * field ends up above (screen height - keyboard height). Logging the keyboard's
-   * own height beside the field rectangle makes that arithmetic instead of a
-   * judgement call.
+   * 这就是整套方案所依赖的测量。框架只会把页面上推直到聚焦文本框可见，所以问题在于
+   * 那个文本框最后是否落在（屏幕高度 - 键盘高度）之上。把键盘自身的高度和文本框矩形
+   * 一起打出来，就把这件事从主观判断变成了算术。
    *
-   * Two failure modes look identical on screen -- the field is still covered -- and
-   * mean opposite things: the framework moved nothing (the placement was not
-   * honoured at all, and no tweaking of it will help) or it moved but not far
-   * enough (the margin constant is the lever). Only these numbers separate them.
+   * 两种失败模式在屏幕上看起来一样 —— 文本框还是被盖住 —— 但含义相反：框架什么都没
+   * 移（摆放根本没被采纳，再怎么调它也没用），或者移了但不够远（margin 常量就是那个
+   * 杠杆）。只有这些数字能把它们分开。
    *
-   * Wrapped in try/catch: if any of it is unavailable on this device, the right
-   * outcome is "no measurements", not a page that fails to build.
+   * 包在 try/catch 里：如果在这台设备上有任何一项不可用，正确的结果是「没有测量值」，
+   * 而不是一个构建失败的页面。
    */
   async watchKeyboardHeight(): Promise<void> {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;
       const win = await window.getLastWindow(ctx);
       this.imeWindow = win;
-      /*
-       * Avoid areas are documented as measured in px, while the field rectangle is
-       * converted to vp for .position(); both are logged in vp so the comparison
-       * is apples to apples.
+      /* [A]
+       * 避让区域文档写明以 px 计量，而文本框矩形是为 .position() 转成 vp 的；两者
+       * 都以 vp 打日志，好让这个比较是同口径的。
        */
       win.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
         if (data.type !== window.AvoidAreaType.TYPE_KEYBOARD) {
@@ -877,46 +871,40 @@ struct Index {
     }
   }
 
-  /*
-   * Delete the request left behind by the PREVIOUS run, before anything can read it.
+  /* [A]
+   * 删除【上一次】运行遗留的请求，赶在任何东西读到它之前。
    *
-   * ime_want exists only while the game has a text field focused: native creates
-   * it in SDL_StartTextInput and removes it in SDL_StopTextInput. If the app is
-   * killed while that dialog is open, the file survives into the next launch --
-   * and the poll below reads it as a live request on its first tick, so the
-   * keyboard opens by itself over the main menu with nothing focused.
-   * Reported from the device: leave a text field up, kill the app, reopen it.
+   * ime_want 只在游戏有文本框聚焦期间存在：原生侧在 SDL_StartTextInput 里创建它，
+   * 在 SDL_StopTextInput 里移除它。如果应用在那个对话框开着时被杀掉，这个文件会活到
+   * 下一次启动 —— 而下面的轮询在第一个 tick 就把它读成一条活的请求，于是键盘会在
+   * 主菜单上、没有任何东西聚焦的情况下自己弹出来。设备上报的现象：留着一个文本框，
+   * 杀掉应用，再打开它。
    *
-   * Clearing at startup is sound because a request cannot be legitimate yet: this
-   * runs before the game has drawn anything, let alone focused a field, so any
-   * file present at this moment is by definition left over. The game asks again
-   * if it still wants text.
+   * 启动时清除是成立的，因为此时请求不可能合法：这段代码在游戏画出任何东西之前运行，
+   * 更别说聚焦某个文本框了，所以此刻存在的任何文件按定义都是遗留物。游戏要是还想要
+   * 文本，它会再问一次。
    *
-   * ime_cmd goes with it. It carries the tail of the last session's typing for the
-   * other copy of libSDL3.so to drain, and that copy is not running yet -- so the
-   * same reasoning applies, and a stale command would be replayed into a field
-   * that is not there. It is truncated rather than deleted, because native opens
-   * it on the assumption that it exists... which is not true at this point, so
-   * deleting is the honest option; native creates it on demand.
+   * ime_cmd 也一样。它带着上一次会话打字的尾巴，等另一份 libSDL3.so 去排空，而那份
+   * 还没运行 —— 所以同样的推理适用，一条过期的命令会被重放进一个根本不存在的文本框。
+   * 它是被截断而不是被删除的，因为原生侧打开它时假设它存在……而在这个时点那个假设并不
+   * 成立，所以删除才是诚实的选项；原生侧会按需创建它。
    *
-   * ime_rect is deliberately NOT touched. It is native's published reading, and
-   * leaving it lets readImeRect() fall back on the last known-good rectangle
-   * instead of on the 1x1 default.
+   * ime_rect 刻意【不】动。它是原生侧发布的读数，留着它，readImeRect() 就能退回用
+   * 最后一个已知可用的矩形，而不是退回 1x1 的默认值。
    */
   clearStaleImeState(): void {
     const stale: string[] = [IME_WANT_FILE, IME_CMD_FILE];
     for (const path of stale) {
       try {
-        /* accessSync returns a boolean; it does not throw for a missing file --
-         * see the note in pollImeWant. */
+        /* [A] accessSync 返回一个布尔值；文件缺失时它不会抛异常 —— 见 pollImeWant
+         * 里的说明。 */
         if (fs.accessSync(path)) {
           fs.unlinkSync(path);
           hilog.info(DOMAIN, TAG, 'ime: cleared a stale %{public}s from the previous run', path);
         }
       } catch (e) {
-        /* A leftover that cannot be removed is worth knowing about but is not
-         * worth failing the page for: the poll would open the keyboard, which is
-         * the behaviour without this call at all. */
+        /* [B] 一个删不掉的遗留物值得知道，但不值得为它让页面失败：轮询还是会打开
+         * 键盘，那正是根本没有这次调用时的行为。 */
         const err = e as BusinessError;
         hilog.warn(DOMAIN, TAG, 'ime: could not clear %{public}s: %{public}s', path, err.message);
       }
@@ -938,53 +926,49 @@ struct Index {
   pollImeWant(): void {
     let want: boolean = false;
     try {
-      /* accessSync returns a boolean; it does not throw for a missing file. */
+      /* [A] accessSync 返回一个布尔值；文件缺失时它不会抛异常。 */
       want = fs.accessSync(IME_WANT_FILE);
     } catch (e) {
       want = false;
     }
-    /*
-     * The request file says what the GAME wants, not what the USER wants, and
-     * conflating the two is what made the keyboard impossible to close: the user
-     * dismissed it, the game still wanted text, so the next tick put it back.
+    /* [A]
+     * 这个请求文件说的是【游戏】想要什么，不是【用户】想要什么，而把两者混为一谈正是
+     * 让键盘关不掉的原因：用户关掉了它，游戏还想要文本，于是下一个 tick 又把它放回来。
      *
-     * Measured, before this was split: ESC closed the keyboard and it reappeared
-     * immediately, and the game's field never gave up focus because ESC never
-     * reached the game (our text field had eaten it).
+     * 在把它拆开之前实测过：ESC 关掉了键盘，它立刻又出现；而游戏的文本框从不放弃焦点，
+     * 因为 ESC 从未抵达游戏（我们的文本框把它吃掉了）。
      *
-     * So `want` falling is a fresh start, and a dismissal latches until then.
+     * 所以 `want` 变 false 就是一次重新开始，而一次关闭会锁存到那时为止。
      */
     if (!want) {
       if (this.showIme) {
         this.dismissIme();
       }
       this.imeDismissedUntil = 0;
-      /* The game let the field go, so whatever the user did before is spent:
-       * the next text field must be able to raise the keyboard by itself. */
+      /* [B] 游戏放开了文本框，所以用户之前做过的都作废了：下一个文本框必须能自己
+       * 唤起键盘。 */
       this.imeUserHid = false;
       return;
     }
     if (Date.now() < this.imeDismissedUntil) {
-      return;   /* just put away by the user; give the game a moment to react */
+      return;   /* [B] 刚被用户收起来；给游戏一点时间反应 */
     }
     if (this.imeDismissedUntil !== 0) {
-      /*
-       * The deadline expired with the game STILL asking for text. That means the
-       * ESC we forwarded did not close the game's dialog -- so this is the line
-       * to look for in hilog when the keyboard "comes back by itself".
+      /* [A]
+       * 截止时间到期了，而游戏【仍然】在要文本。这意味着我们转发出去的 ESC 没能关掉
+       * 游戏的对话框 —— 所以当键盘「自己又回来了」时，要在 hilog 里找的就是这一行。
        */
       hilog.warn(DOMAIN, TAG, 'IME dismissed %{public}dms ago but the game still wants text; the forwarded ESC did not release it', IME_DISMISS_MS);
       this.imeDismissedUntil = 0;
     }
-    /* The field may have moved, or this may be the first usable reading. */
+    /* [B] 文本框可能移动了，或者这是第一次可用的读数。 */
     this.readImeRect();
     if (!this.showIme) {
       this.showIme = true;
       this.imeSent = '';
-      /*
-       * The field does not exist until the frame this state change triggers has
-       * been built, so the first request has to wait for it. A single delayed
-       * request is enough because the case below takes over from here.
+      /* [A]
+       * 在这个状态变化触发的那一帧被构建出来之前，文本框并不存在，所以第一次请求必须
+       * 等它。一次延迟请求就够了，因为接下来由下面的分支接手。
        */
       setTimeout(() => {
         if (this.showIme) {
@@ -992,23 +976,19 @@ struct Index {
         }
       }, 60);
     } else if (!this.imeFieldFocused && !this.imeUserHid) {
-      /*
-       * The game still wants text and the field is up, but does not hold focus --
-       * something took it. Re-take it.
+      /* [A]
+       * 游戏仍然想要文本、文本框也在，但它不持有焦点 —— 有东西把它抢走了。重新拿回来。
        *
-       * This replaces a burst of five requests spread over ~450ms after showing,
-       * which was the wrong shape: a steal landing after the burst ended left the
-       * field up and permanently dead, and nothing would try again. Asking on
-       * every poll instead is both simpler and self-correcting, and it cannot run
-       * away because a poll is every 200ms, not a loop.
+       * 这取代了显示之后约 450ms 内散开的五次请求连发，那个形状是错的：一次抢焦落在
+       * 连发结束之后，会让文本框留着却永久死掉，而且再也不会有人重试。改成每次轮询都
+       * 请求反而更简单、也能自我纠正，而且它不会失控，因为轮询是每 200ms 一次，不是
+       * 循环。
        *
-       * `imeUserHid` IS THE WHOLE REASON THIS IS SAFE. Without it this branch
-       * cannot tell "a steal to recover from" from "the user just hid the
-       * keyboard", because both are exactly "field up, no focus, game still
-       * asking" -- and it re-took the focus either way, which put the keyboard
-       * straight back after the user had dismissed it. The flag is what the user
-       * hiding the keyboard sets, and the comment on it above says why the
-       * game's own request cannot stand in for it.
+       * `imeUserHid` 正是这一切安全的原因。没有它，这个分支就分不清「一次需要恢复的
+       * 抢焦」和「用户刚刚藏起了键盘」，因为两者都恰恰是「文本框在、无焦点、游戏还在
+       * 要」—— 于是它不管哪种都会把焦点拿回来，也就把键盘在用户刚关掉之后直接放了回来。
+       * 这个标志是「用户藏起键盘」时置位的，上面关于它的注释说明了为什么游戏自己的请求
+       * 不能代替它。
        */
       focusControl.requestFocus('ime_ui_field');
     }
@@ -1017,33 +997,29 @@ struct Index {
   dismissIme(): void {
     this.imeDismissedUntil = Date.now() + IME_DISMISS_MS;
     this.showIme = false;
-    /* Clear this here, before the unmount's onBlur arrives: otherwise that blur
-     * sees a field that "had" focus and extends the deadline, which would push
-     * the keyboard back by another 1.5s on the next request. */
+    /* [A] 在这里清掉它，赶在卸载触发的 onBlur 到达之前：否则那个 blur 会看到一个
+     * 「曾经」聚焦的文本框，从而延长截止时间，那会在下一次请求时把键盘又推后 1.5s。 */
     this.imeFieldFocused = false;
-    /* Hand the keyboard back to the game, or ESC and WASD stop arriving. */
+    /* [A] 把键盘交还给游戏，否则 ESC 和 WASD 就不再到达。 */
     focusControl.requestFocus('SDL_XComponent');
   }
 
-  /*
-   * Read the game's field rectangle and place our invisible field over it.
+  /* [A]
+   * 读取游戏的文本框矩形，并把我们的隐形文本框摆到它上面。
    *
-   * Called on every poll while the keyboard is up, not just once when it appears:
-   * the field can move (a dialog being dragged, the viewport shrinking), and the
-   * native side republishes whenever it changes.
+   * 键盘弹起期间每次轮询都调用，而不只在它出现时调一次：文本框会移动（对话框被拖动、
+   * 视口缩小），原生侧只要它变了就会重新发布。
    *
-   * A bad reading NEVER overwrites a good one. The native side only writes while
-   * text input is active, so the file can hold a stale-but-usable rectangle at the
-   * moment the keyboard comes up -- and writing pixels where the file says
-   * "0 0 0 0" for one frame would yank the layout to the top-left and back. So a
-   * zero or negative area is ignored and the previous placement stands.
+   * 一个坏读数【绝不】覆盖一个好读数。原生侧只在文本输入活跃时写入，所以键盘弹起的
+   * 那一刻文件里可能是一个过时但仍可用的矩形 —— 而如果文件写着 "0 0 0 0"，照它写
+   * 一帧就会把布局拽到左上角再拽回来。所以面积为零或负会被忽略，上一次的摆放保持不变。
    */
   readImeRect(): void {
     let text: string = '';
     try {
       text = fs.readTextSync(IME_RECT_FILE);
     } catch (e) {
-      return;   /* not written yet; keep whatever we had */
+      return;   /* [B] 还没写入；保留我们已有的 */
     }
     const parts: string[] = text.trim().split(' ');
     if (parts.length !== 4) {
@@ -1059,10 +1035,10 @@ struct Index {
     if (w <= 0 || h <= 0 || x < 0 || y < 0) {
       return;
     }
-    /*
-     * Game pixels -> vp. SDL's rect came from Arc's Core.graphics, which is in
-     * pixels, while .position() is in vp; on a tablet these differ by the display
-     * density, so this conversion is load-bearing rather than cosmetic.
+    /* [A]
+     * 游戏像素 -> vp。SDL 的矩形来自 Arc 的 Core.graphics，那是像素单位，而
+     * .position() 用 vp；在平板上两者相差一个显示密度，所以这个转换是承重的，不是
+     * 装饰性的。
      */
     const xvp: number = px2vp(x);
     const yvp: number = px2vp(y);
@@ -1070,25 +1046,22 @@ struct Index {
     const hvp: number = px2vp(h);
     if (xvp === this.imeFieldX && yvp === this.imeFieldY
         && wvp === this.imeFieldW && hvp === this.imeFieldH) {
-      return;   /* unchanged: assigning anyway would redraw every poll */
+      return;   /* [B] 没变：照样赋值会让每次轮询都重绘 */
     }
     this.imeFieldX = xvp;
     this.imeFieldY = yvp;
     this.imeFieldW = wvp;
-    /* The game's field, unmodified. IME_FIELD_MARGIN_VP is applied where the
-     * invisible box is placed instead of here, so that this stays a truthful
-     * reading of the file -- it is what the hilog line below prints, and a value
-     * that secretly includes a layout decision is a value nobody can compare
-     * against a measurement. */
+    /* [A] 游戏的文本框，未经修改。IME_FIELD_MARGIN_VP 是在摆放隐形盒子的地方应用的，
+     * 不是在这里，这样这里始终是对文件的一次忠实读数 —— 它正是下面那行 hilog 打印的
+     * 东西，而一个偷偷包含了布局决定的值，是没人能拿去和测量对照的值。 */
     this.imeFieldH = hvp;
   }
 
-  /*
-   * Read the recorded control scheme.
+  /* [B]
+   * 读取记录的操作方案。
    *
-   * An unreadable or empty file means mobile, matching what the launcher did
-   * before this setting existed -- so the button shows the truth for a fresh
-   * install rather than claiming a choice nobody made.
+   * 文件不可读或为空都表示 mobile，与这个设置存在之前启动器的做法一致 —— 所以对于
+   * 全新安装，按钮显示的是事实，而不是声称一个没人做过的选择。
    */
   readControlMode(): void {
     try {
@@ -1097,29 +1070,26 @@ struct Index {
       this.controlMode = text.trim() === CONTROL_MODE_DESKTOP
         ? CONTROL_MODE_DESKTOP : CONTROL_MODE_MOBILE;
     } catch (e) {
-      this.controlMode = CONTROL_MODE_MOBILE;   /* absent: the default */
+      this.controlMode = CONTROL_MODE_MOBILE;   /* [B] 文件不存在：默认值 */
     }
   }
 
-  /*
-   * Record the other scheme and tell the player it needs a restart.
+  /* [A]
+   * 记录另一套方案，并告诉玩家需要重启。
    *
-   * The restart is not laziness. Mindustry derives its entire input layer and UI
-   * from one bit, Vars.mobile, and that bit is written exactly once, in
-   * Vars.init() -- before the game exists. Its own in-game switch changes only
-   * the input handler and leaves the bit alone, which is why that switch gives
-   * desktop controls on a mobile UI. So the answer has to be on disk before the
-   * JVM starts, and the honest thing to do is say so rather than change nothing
-   * visible and let the player think the button is broken.
+   * 重启不是偷懒。Mindustry 的整个输入层和 UI 都派生自一个位 —— Vars.mobile ——
+   * 而这个位只被写一次，在 Vars.init() 里，早于游戏存在。它自带的游戏内开关只改输入
+   * 处理器、不动那个位，这就是为什么那个开关会在移动端 UI 上给出桌面控制。所以答案
+   * 必须在 JVM 启动之前就落到磁盘上，而诚实的做法是把这一点说出来，而不是什么都没
+   * 变可见、让玩家以为按钮坏了。
    */
-  /*
-   * Write a diagnostics bundle to the app's Downloads folder and say so.
+  /* [A]
+   * 把一份诊断包写到应用的 Downloads 文件夹，并告知结果。
    *
-   * The folder is recomputed here rather than remembered from the launch-time
-   * ensureModFolder() call, because this can be pressed long after that resolved
-   * and the player may have moved or made the folder since. modFolderPath() reads
-   * the same state file the folder setup writes, so it reflects the current
-   * answer; when it is empty the export fails loudly rather than writing nowhere.
+   * 这个文件夹是在这里重新计算的，而不是记住启动时 ensureModFolder() 那次调用的
+   * 结果，因为这个按钮可能在那次解析很久之后才被按下，而玩家可能已经移动或新建了
+   * 那个文件夹。modFolderPath() 读的是文件夹设置写下的同一个状态文件，所以它反映的
+   * 是当前答案；当它为空时，导出会大声失败，而不是写到某个不存在的地方。
    */
   exportDiagnostics(): void {
     try {
@@ -1153,24 +1123,22 @@ struct Index {
     } catch (e) {
       const err = e as BusinessError;
       hilog.error(DOMAIN, TAG, 'writing control mode failed: %{public}s', err.message);
-      return;                                   /* do not claim a change that did not stick */
+      return;                                   /* [B] 不要声称一个没落地的改动 */
     }
     this.toast(next === CONTROL_MODE_DESKTOP
       ? '已切换为 PC 模式，重启游戏后生效'
       : '已切换为触屏模式，重启游戏后生效');
   }
 
-  /*
-   * Show a short message, without letting a failure to show it become a failure
-   * of whatever it was reporting.
+  /* [A]
+   * 显示一条短消息，但不要让「显示失败」变成「它要报告的那件事失败」。
    *
-   * showToast is declared as throwing, so a bare call is a compiler warning --
-   * and by the time these callers report something they have usually already
-   * succeeded at it. A toast that throws must not turn a completed action into
-   * an apparent failure.
+   * showToast 声明为会抛异常，所以裸调用会是一条编译器警告 —— 而这些调用方来报告
+   * 某件事时，通常它们已经做成了那件事。一个抛异常的 toast 不能把一个已完成的操作
+   * 变成一个看起来的失败。
    *
-   * Through the UIContext rather than the global `promptAction`: the global
-   * form is deprecated, and this file has enough deprecation warnings already.
+   * 走 UIContext 而不是全局的 `promptAction`：全局形式已废弃，而这个文件的废弃警告
+   * 已经够多了。
    */
   toast(message: string): void {
     try {
@@ -1182,23 +1150,21 @@ struct Index {
     }
   }
 
-  /*
-   * Import mod files the player picks, then say a restart is needed.
+  /* [C]
+   * 导入玩家挑选的模组文件，然后说需要重启。
    *
-   * The restart is not laziness, and it is a different reason from the control
-   * switch above: the game scans its mods directory exactly once, inside
-   * Vars.load(). Nothing watches it, so a file that arrives afterwards sits on
-   * disk and is invisible. Saying so is the difference between "this works" and
-   * "the button does nothing".
+   * 重启不是偷懒，而且理由和上面的操作方案开关不同：游戏只扫描一次它的模组目录，在
+   * Vars.load() 里。没有任何东西在监视它，所以之后到达的文件就躺在磁盘上、不可见。
+   * 把这一点说出来，就是「这能用」和「这个按钮什么也不做」的区别。
    *
-   * See ModImporter for why this entry has to exist at all -- the game's own
-   * import button cannot work on this platform.
+   * 这个条目为什么非存在不可，见 ModImporter —— 游戏自带的导入按钮在这个平台上
+   * 用不了。
    */
-  /*
-   * Show the About card, reading the version from the bundle.
+  /* [B]
+   * 显示 About 卡片，版本号从包里读。
    *
-   * Read when it is opened rather than at startup: it costs a bundle query and
-   * nothing needs the answer before then.
+   * 在打开时才读，而不是启动时读：它要花一次包查询，而在那之前没有任何东西需要这个
+   * 答案。
    */
   openAbout(): void {
     this.ballMenu = false;
@@ -1217,19 +1183,16 @@ struct Index {
     }
   }
 
-  /*
-   * importMods() was here. Removed with the menu row that called it -- see the
-   * note in build() where the row used to be.
+  /* [A]
+   * importMods() 曾在这里。它已随调用它的那行菜单一起删除 —— 见 build() 里那行
+   * 菜单原先所在处的说明。
    */
 
-  /*
-   * Record the window size, and put the ball at the right edge the first time we
-   * hear it.
+  /* [A]
+   * 记录窗口尺寸，并在第一次听到它时把球放到右边缘。
    *
-   * The size comes from the component rather than from the display: a window is not
-   * always the whole screen, and clamping the ball against the wrong rectangle would
-   * let it sit off-screen. display.getDefaultDisplaySync() is not used at all for
-   * that reason.
+   * 尺寸来自组件而不是显示器：窗口不总是整块屏幕，而拿错误的矩形去做 clamp 会让球
+   * 停在屏幕之外。出于这个理由，完全没有用 display.getDefaultDisplaySync()。
    */
   onWindowSize(w: number, h: number): void {
     if (w <= 0 || h <= 0) {
@@ -1237,33 +1200,29 @@ struct Index {
     }
     this.winW = w;
     this.winH = h;
-    /* Recomputed on every report; the size follows the window. */
+    /* [B] 每次上报都重新计算；尺寸跟随窗口。 */
     this.ballSizeVp = Math.round(
       Math.min(Math.max(Math.min(w, h) * BALL_SIZE_RATIO, BALL_SIZE_MIN_VP), BALL_SIZE_MAX_VP));
     if (this.ballPlaced) {
-      /*
-       * Position is deliberately NOT re-clamped on later reports.
+      /* [A]
+       * 后续上报时刻意【不】重新 clamp 位置。
        *
-       * onAreaChange also fires while the framework pushes the page up to clear the
-       * keyboard. Clamping there would drag the ball upward and leave it there once
-       * the keyboard closed -- a permanent, baffling move caused by an unrelated
-       * feature. A resize that leaves the ball slightly proud of an edge is a much
-       * smaller problem: the stored position is clamped on the next launch, and a
-       * drag fixes it immediately.
+       * 框架为让开键盘而把页面上推时，onAreaChange 也会触发。在那里做 clamp 会把球
+       * 往上拖，并在键盘关闭后把它留在那里 —— 一次由无关功能引起的、永久而令人困惑的
+       * 移动。相比之下，一次让球稍微凸出边缘的尺寸变化是个小得多的问题：存下的位置会
+       * 在下次启动时被 clamp，而拖一下就能立刻修正。
        */
       return;
     }
     const s: number = this.ballSizeVp;
     if (this.ballRestoreX >= 0 && this.ballRestoreY >= 0) {
-      /*
-       * Clamped to the resting band, not merely into the window.
+      /* [A]
+       * 被 clamp 到「停靠带」里，而不只是 clamp 进窗口。
        *
-       * Lower bound: an older build wrote flush positions, and without this a ball
-       * restored from one would sit tangent to the edge until the player happened to
-       * drag it -- the same inconsistency this change exists to remove.
-       * Upper bound: a position stored on a wider screen must not put the ball past
-       * the edge of a narrower one.
-       * Math.max on the upper bound keeps the band non-inverted on a tiny window.
+       * 下界：更早的构建写入的是贴边位置，没有这一条，从那种位置恢复的球会一直贴边
+       * 相切，直到玩家碰巧拖动它 —— 正是这次改动要消除的那种不一致。
+       * 上界：一个存在更宽屏幕上的位置，绝不能把球放到更窄屏幕的边缘之外。
+       * 上界上的 Math.max 让这个带子在极小窗口上不会翻转。
        */
       this.ballX = Math.min(Math.max(this.ballRestoreX, BALL_MARGIN_VP),
                             Math.max(BALL_MARGIN_VP, w - s - BALL_MARGIN_VP));
@@ -1283,17 +1242,16 @@ struct Index {
   onBallTouch(e: TouchEvent): void {
     const t: TouchObject = e.touches[0];
     if (e.type === TouchType.Down) {
-      /*
-       * Reveal FIRST, and without animation.
+      /* [A]
+       * 【先】露出，而且不带动画。
        *
-       * The half-hidden ball sits somewhere the revealed ball is not, so a drag
-       * anchored against the hidden coordinates would fling it out from under the
-       * finger -- the reported "jumps out of the half ball". Revealing on touch-down
-       * also means a tap brings the whole ball back at once, which is what was asked
-       * for, rather than only on release.
+       * 半隐藏的球所处的位置并不是露出后的球所在的位置，所以拿「隐藏时的坐标」当锚点
+       * 去拖动，会把球从手指底下甩出去 —— 就是上报的那个「从半个球里跳出来」。按下时
+       * 就露出，也意味着点一下就能把整个球立刻带回来（这正是要求的行为），而不是只在
+       * 松手时才露出。
        *
-       * The previous hidden state is captured here because the release handler needs
-       * it and cannot recover it afterwards: this line is what destroys it.
+       * 之前的隐藏状态在这里被捕获，因为松手处理器需要它、而之后无法找回：正是这一行
+       * 把它销毁掉。
        */
       this.ballWasHiddenOnDown = this.ballHidden;
       this.cancelBallHide();
@@ -1310,12 +1268,12 @@ struct Index {
       const dx: number = t.windowX - this.dragTouchX;
       const dy: number = t.windowY - this.dragTouchY;
       if (!this.dragMoved && Math.abs(dx) < BALL_DRAG_SLOP_VP && Math.abs(dy) < BALL_DRAG_SLOP_VP) {
-        return;   /* still within tap tolerance -- do not move yet */
+        return;   /* [B] 仍在点按容差内 —— 先别移动 */
       }
       this.dragMoved = true;
-      this.ballMenu = false;   /* dragging closes the menu */
+      this.ballMenu = false;   /* [B] 拖动会关闭菜单 */
       const s: number = this.ballSizeVp;
-      /* Clamped to the window, so the ball cannot be pushed off the edge and lost. */
+      /* [B] 对窗口做 clamp，这样球不会被推离边缘而丢失。 */
       this.ballX = Math.min(Math.max(this.dragBallX + dx, 0), Math.max(0, this.winW - s));
       this.ballY = Math.min(Math.max(this.dragBallY + dy, 0), Math.max(0, this.winH - s));
       return;
@@ -1327,25 +1285,22 @@ struct Index {
         this.saveBallPos();
         this.scheduleBallHide();
       } else if (this.ballWasHiddenOnDown) {
-        /*
-         * The first tap only brings the ball back; the menu needs a second one.
+        /* [A]
+         * 第一次点按只把球带回来；打开菜单需要第二次。
          *
-         * Without this split, tapping the half-hidden ball does two things at once:
-         * it restores the ball AND opens the menu, so a player who only wanted to see
-         * where the ball had gone gets a menu they did not ask for -- and has to
-         * dismiss it before doing anything else. Separating the two makes the reveal
-         * its own, undoable, action.
+         * 没有这个拆分，点半隐藏的球会同时做两件事：既恢复球、【又】打开菜单，于是一个
+         * 只想看看球跑哪去了的玩家，会得到一个他并没有要的菜单 —— 而且在做任何别的事
+         * 之前还得先把它关掉。把两者分开，就让「露出」成为一个独立的、可反悔的动作。
          *
-         * The countdown restarts: otherwise the ball would stay out for good after
-         * one tap, and the half-hide would stop being the resting state.
+         * 倒计时会重新开始：否则点一下之后球就会一直待在外面，半隐藏也就不再是静息
+         * 状态了。
          */
         this.scheduleBallHide();
       } else {
         this.ballMenu = !this.ballMenu;
-        /*
-         * A hidden ball with an open menu would be a menu floating beside nothing, and
-         * the player is mid-interaction anyway -- so the countdown restarts only once
-         * the menu is dismissed.
+        /* [B]
+         * 一个隐藏的球配一个打开的菜单，会是一个悬浮在虚无旁边的菜单，而且玩家反正
+         * 正在交互中 —— 所以只有在菜单被关掉之后才重新开始倒计时。
          */
         if (!this.ballMenu) {
           this.scheduleBallHide();
@@ -1355,12 +1310,11 @@ struct Index {
     }
   }
 
-  /*
-   * Which edge the ball is closest to.
+  /* [A]
+   * 球离哪条边最近。
    *
-   * Shared with the hide direction on purpose: if the snap and the hide each worked
-   * it out separately they could disagree, and the ball would slide off the wrong
-   * side of the screen -- visible, but well away from where anyone would look.
+   * 刻意与隐藏方向共用：如果吸附和隐藏各自算各自的，它们就可能不一致，球会从屏幕
+   * 错误的一侧滑出去 —— 看得见，但远在没人会去看的地方。
    */
   nearestEdge(): string {
     const s: number = this.ballSizeVp;
@@ -1383,15 +1337,14 @@ struct Index {
     return 'bottom';
   }
 
-  /*
-   * Send the ball to whichever edge is nearest.
+  /* [A]
+   * 把球送到最近的那条边。
    *
-   * All four, not just left and right: the ball is small and the player may want it
-   * along the top or bottom, where a left/right-only snap would fight them.
+   * 四条边都算，不只左右：球很小，玩家可能想让它贴在上边或下边，而只支持左右的吸附
+   * 会跟他对着干。
    *
-   * Animated rather than jumped -- an object this size teleporting across the screen
-   * reads as a glitch. animateTo closes over the assignment, so the position is set
-   * once inside the callback rather than before it.
+   * 带动画而不是瞬移 —— 这个大小的物体在屏幕上瞬移读起来像故障。animateTo 会闭包
+   * 捕获那次赋值，所以位置是在回调内部设置一次，而不是在它之前。
    */
   snapBallToEdge(): void {
     if (this.winW <= 0 || this.winH <= 0) {
@@ -1399,15 +1352,14 @@ struct Index {
     }
     const s: number = this.ballSizeVp;
     const edge: string = this.nearestEdge();
-    /*
-     * Stopped at BALL_MARGIN_VP short of the edge, not flush against it.
+    /* [A]
+     * 停在离边 BALL_MARGIN_VP 的地方，不贴边。
      *
-     * Flush was the original behaviour and it disagreed with where a freshly placed
-     * ball sits, which is the margin in from the edge. So a ball the player had never
-     * touched kept its gap, and a ball dragged once lost it permanently. Reported from
-     * the device.
+     * 贴边是原来的行为，它和一个新摆放的球所在的位置（离边一个 margin）不一致。于是
+     * 玩家从未碰过的球保留着它的间隙，而拖动过一次的球就永久失去了间隙。设备上报了
+     * 这个现象。
      *
-     * The margin is now the resting inset on every edge, for both paths.
+     * 现在这个 margin 是每条边上的停靠内缩量，两条路径都一样。
      */
     let x: number = this.ballX;
     let y: number = this.ballY;
@@ -1427,17 +1379,16 @@ struct Index {
     });
   }
 
-  /*
-   * How far the ball is slid past its edge while hidden, as a render-time offset.
+  /* [A]
+   * 隐藏时球滑出它那条边多远，作为一个渲染期偏移量。
    *
-   * 0 while revealed, which is the important part: ballX/ballY are the only
-   * coordinates anything writes, so hiding can never be mistaken for a move.
+   * 露出时为 0，这是重要的一点：ballX/ballY 是任何东西唯一写入的坐标，所以隐藏永远
+   * 不会被误当成一次移动。
    *
-   * BALL_MARGIN_VP IS PART OF THE OFFSET, not an accident. The ball now rests a
-   * margin in from the edge, so sliding by the ball's own fraction alone would leave
-   * that margin on screen as well -- 40% of the ball plus 8vp, i.e. hiding noticeably
-   * less than the three fifths that were asked for. Adding the margin back pins the
-   * hidden position to the SCREEN edge, which is what "leave 40% visible" means.
+   * BALL_MARGIN_VP 是【偏移量的一部分】，不是意外。球现在离边停靠一个 margin，所以
+   * 只按球自身的比例来滑，会把那个 margin 也留在屏幕上 —— 球的 40% 再加 8vp，也就是
+   * 明显少于要求的三分之五。把 margin 加回去，就把隐藏后的位置钉到【屏幕】边缘，那才
+   * 是「留 40% 可见」的意思。
    */
   ballHideDx(): number {
     if (!this.ballHidden) {
@@ -1468,7 +1419,7 @@ struct Index {
     }
   }
 
-  /* Start the countdown to half-hide. Called whenever the ball settles or is let go. */
+  /* [B] 启动半隐藏的倒计时。每当球停稳或被放开时调用。 */
   scheduleBallHide(): void {
     this.cancelBallHide();
     if (this.ballMenu || !this.ballPlaced) {
@@ -1485,24 +1436,22 @@ struct Index {
     }, BALL_HIDE_MS);
   }
 
-  /*
-   * The ability context, by the route that is not deprecated.
+  /* [C]
+   * ability 上下文，走的是没有废弃的那条路。
    *
-   * getContext() still works and is what the older code here uses, but it is
-   * deprecated and this file is already carrying a warning for every call. New code
-   * should not add more. getHostContext() can return undefined, so it is checked
-   * rather than assumed -- and "no context" means the file cannot be reached, which
-   * is what both callers already do nothing about.
+   * getContext() 仍然能用，这里更早的代码用的就是它，但它已废弃，而这个文件每调用
+   * 一次本就带着一条警告。新代码不该再增加。getHostContext() 可能返回 undefined，
+   * 所以是检查它而不是假定有 —— 而「没有上下文」意味着文件够不到，两个调用方本来
+   * 对此也都不做处理。
    *
-   * Only these two call sites use it. The other four calls are left alone on purpose:
-   * they fetch the context to reach permissions and the keyboard, where a change that
-   * behaved even slightly differently would cost far more than a warning line.
+   * 只有这两个调用点用它。另外四处调用刻意不动：它们取上下文是为了够到权限和键盘，
+   * 在那里，一个行为哪怕稍有差别的改动，代价都远高于一行警告。
    */
   ballCtx(): common.UIAbilityContext | undefined {
     return this.getUIContext().getHostContext() as common.UIAbilityContext | undefined;
   }
 
-  /* Where the ball was parked, so the next launch can put it back. */
+  /* [B] 球上次停在哪，好让下次启动把它放回去。 */
   saveBallPos(): void {
     try {
       const ctx: common.UIAbilityContext | undefined = this.ballCtx();
@@ -1519,13 +1468,12 @@ struct Index {
     }
   }
 
-  /*
-   * Read the stored position into ballRestoreX/Y. It is NOT applied here: applying it
-   * needs a window size to clamp against, and onAreaChange has not reported one yet.
+  /* [B]
+   * 把存下的位置读进 ballRestoreX/Y。它【不】在这里应用：应用它需要一个窗口尺寸来做
+   * clamp，而 onAreaChange 还没上报过。
    *
-   * Junk is rejected rather than clamped. A corrupt line would otherwise park the ball
-   * in a corner with no explanation, and the default position is a perfectly good
-   * answer for a file that cannot be read.
+   * 垃圾内容会被拒绝而不是被 clamp。否则一行损坏的数据会把球停进某个角落、毫无解释；
+   * 而对于一个读不了的文件，默认位置是个完全够用的答案。
    */
   readBallPos(): void {
     try {
@@ -1546,11 +1494,11 @@ struct Index {
       this.ballRestoreX = x;
       this.ballRestoreY = y;
     } catch (e) {
-      /* No file on a first run, which is the normal case, not an error. */
+      /* [B] 首次运行时没有文件，这是正常情况，不是错误。 */
     }
   }
 
-  /* Where the menu goes: beside the ball, opening inward. */
+  /* [B] 菜单摆在哪：球的旁边，朝内开。 */
   ballMenuX(): number {
     const right: number = this.ballX + this.ballSizeVp + 8;
     if (right + BALL_MENU_W_VP > this.winW) {
@@ -1559,7 +1507,7 @@ struct Index {
     return right;
   }
 
-  /* Vertically aligned with the ball, but never past the window edge. */
+  /* [B] 与球垂直对齐，但绝不越过窗口边缘。 */
   ballMenuY(): number {
     const below: number = this.ballY + this.ballSizeVp - 40;
     return Math.min(Math.max(below, 0), Math.max(0, this.winH - BALL_MENU_H_VP));
@@ -1576,36 +1524,31 @@ struct Index {
     }
   }
 
-  /*
-   * The system Back gesture goes up one level inside the game. It never leaves the app.
+  /* [A]
+   * 系统返回手势在游戏内部上一层。它从不离开应用。
    *
-   * Mindustry's "back" is ESC -- it closes the current dialog or menu and returns to the
-   * previous screen -- so the gesture is forwarded as ESC through the same file channel
-   * the on-screen keyboard already uses. That channel is read every frame with no guard,
-   * so it works whether or not a text field is up.
+   * Mindustry 的「返回」就是 ESC —— 它关掉当前对话框或菜单并回到上一屏 —— 所以这个
+   * 手势被作为 ESC，通过屏幕键盘已经在用的同一条文件通道转发出去。那条通道每一帧都被
+   * 无守卫地读取，所以无论有没有文本框，它都能工作。
    *
-   * Returning true means "this page handled it": the default return logic does not run
-   * and the app stays on screen. So a Back that used to close the app now closes a menu.
+   * 返回 true 意味着「本页处理了它」：默认返回逻辑不会运行，应用留在屏幕上。所以一次
+   * 过去会关掉应用的返回，现在关掉的是一个菜单。
    *
-   * LEAVING THE APP IS THE GAME'S OWN EXIT, NOT OURS
-   *   Quitting is done from the game's main menu. That path already ends cleanly: the
-   *   native side drops the exit marker and this page's poll closes the ability, which
-   *   is the arrangement verified earlier to be a clean exit rather than a crash.
+   * 离开应用是游戏自己的退出，不是我们的
+   *   退出是在游戏主菜单里做的。那条路径本来就干净收尾：原生侧落下退出标记，本页的
+   *   轮询关掉 ability —— 这就是早先验证过的那个安排，是一次干净的退出而不是崩溃。
    *
-   *   A double-press-to-exit was built first and taken back out. Telling "the player is
-   *   at the main menu" from "the player is three dialogs deep" needs the game's UI
-   *   state, and there is no channel for it -- so the rule would have been a timing
-   *   window standing in for information we do not have, exiting early from anywhere
-   *   deep in the UI. A time-based guess about intent is the wrong kind of thing to
-   *   ship. The game has a real exit; use that.
+   *   双击退出先做了，又被拿掉了。要分清「玩家在主菜单」和「玩家在三个对话框深处」，
+   *   需要游戏的 UI 状态，而我们没有这个通道 —— 于是那条规则会是一个计时窗口，顶替
+   *   我们并不掌握的信息，从 UI 深处任意位置提前退出。对意图做基于时间的猜测，是那种
+   *   不该发布的东西。游戏有真正的退出；用它。
    *
-   * ⚠️ The cost, accepted: at the main menu Back does nothing, because ESC has nowhere
-   *   to go there. Escape hatches are unaffected -- the system Home gesture and the
-   *   recents menu are untouched, and neither is suppressed anywhere in this project.
+   * ⚠️ 接受的代价：在主菜单上返回什么都不做，因为 ESC 在那里无处可去。逃生口不受影响
+   *   —— 系统的回桌面手势和最近任务菜单都没动，本项目里任何地方都没有屏蔽它们。
    */
   onBackPress(): boolean {
-    /* 'E' is the whole ESC command; the native side consumes whole lines, so the
-     * newline is part of it, not decoration. */
+    /* [A] 'E' 就是整个 ESC 命令；原生侧按整行消费，所以那个换行是命令的一部分，不是
+     * 装饰。 */
     this.appendCmd('E\n');
     hilog.info(DOMAIN, TAG, 'back: forwarded as ESC (one level up)');
     return true;
@@ -1622,9 +1565,8 @@ struct Index {
     } else if (prev.startsWith(next)) {
       cmds = 'B' + (prev.length - next.length) + '\n';
     } else {
-      /* An edit we cannot express as append/truncate. Retract what we own and
-       * retype it: the field ends up right, and text the game already had before
-       * this session is left untouched. */
+      /* [B] 一次无法用 append/truncate 表达的编辑。撤回我们掌控的部分再重新输入：
+       * 文本框最后是对的，而游戏在本次会话之前就已存在的文本保持不动。 */
       if (prev.length > 0) {
         cmds += 'B' + prev.length + '\n';
       }
@@ -1634,37 +1576,49 @@ struct Index {
     this.appendCmd(cmds);
   }
 
-  /*
-   * Decide whether the JVM must run interpreted, and write or remove the options
-   * file the launcher reads.
+  /* [A]
+   * 决定 JVM 是否必须以解释方式运行，并写出或删除启动器要读的那个选项文件。
    *
-   * MUST RUN BEFORE THE XComponent IS CREATED. The launcher reads that file while
-   * SDL_main is starting, and that happens when the XComponent mounts -- so this
-   * is called from aboutToAppear, which runs first. Any later would be a race the
-   * options file would sometimes lose, and the loss would be silent: the app would
-   * come up with the JIT and die inside JNI_CreateJavaVM.
+   * 【必须】在 XComponent 创建【之前】运行。启动器在 SDL_main 启动时读那个文件，
+   * 而那发生在 XComponent 挂载时 —— 所以这是从运行更早的 aboutToAppear 里调用的。
+   * 再晚就是一场赛跑，选项文件有时会输，而输掉是无声的：应用会带着 JIT 起来，然后
+   * 死在 JNI_CreateJavaVM 里。
    *
-   * THE FILE IS REWRITTEN IN BOTH DIRECTIONS, EVERY LAUNCH. "Write -Xint when
-   * needed, delete it when not" looks equivalent to a conditional write and is
-   * not: the first time a phone is updated past API 26, the -Xint would survive,
-   * the game would run permanently interpreted, and nothing on the device would
-   * explain why.
+   * 这个文件【每次】启动都往两个方向重写。「需要时写 -Xint、不需要时删掉它」看起来
+   * 等价于一次条件写入，其实不是：一台手机第一次被更新到 API 26 以上时，那个 -Xint
+   * 会留下来，游戏会永久以解释方式运行，而设备上没有任何东西能解释为什么。
    */
+  /* [A]
+   * 问一下可执行内存是否可用，并记住答案。
+   *
+   * 【失败即放行】，和坚盾检查一样：如果调用本身抛异常（模块没链接），那是我们认知上
+   * 的一个空白，不是设备受限的证据，而毫无证据就拒绝启动，正是这一整块代码存在的目的
+   * 所要防止的失败。
+   */
+  private recheckExecMemory(): void {
+    let ok = true;
+    try {
+      ok = shield.probeExecMemory();
+    } catch (e) {
+      ok = true;
+    }
+    this.execProbeFailed = !ok;
+    hilog.info(DOMAIN, TAG, 'exec-memory probe: available=%{public}s', String(ok));
+  }
+
   private setupCompatMode(): void {
-    /*
-     * THE ORDER OF THESE THREE DECIDES WHAT BEATS WHAT, and it is:
+    /* [A]
+     * 这三者的顺序决定谁压过谁，它是：
      *
-     *   FORCE_COMPAT_MODE   an explicit instruction, so it wins outright
-     *   the launcher's verdict   a measurement of THIS install
-     *   the device-type rule     a guess, used only when there is no measurement
+     *   FORCE_COMPAT_MODE   一条明确的指令，所以它直接胜出
+     *   启动器的结论   对【本次】安装的一次测量
+     *   设备类型规则   一个猜测，只在没有测量结果时使用
      *
-     * ⚠️ FORCE must stay on top. It is the switch this project's store script
-     * refuses to build a release with unless it is false, so its whole purpose is
-     * to override the automatic decision. An earlier revision of this change put
-     * the verdict above it, and the switch silently stopped working: a launch with
-     * FORCE on read a stale "jit" verdict, turned the force back off, and wrote
-     * nothing -- measured, and it is why the order is spelled out here rather than
-     * left to the sequence of the code.
+     * ⚠️ FORCE 必须待在最上面。它就是本项目发布脚本「只要它不是 false 就拒绝构建
+     * release」的那个开关，所以它的全部目的就是覆盖自动决定。这次改动的一个更早版本
+     * 把结论放到了它上面，于是那个开关无声地失效了：一次开着 FORCE 的启动读到一个
+     * 过期的 "jit" 结论，把强制作罢，结果什么都没写 —— 实测如此，这就是为什么在这里
+     * 把顺序写明，而不是交给代码的先后顺序。
      */
     let want: boolean = false;
     let kind: string = '?';
@@ -1674,15 +1628,14 @@ struct Index {
     try {
       kind = deviceInfo.deviceType;
       api = deviceInfo.sdkApiVersion;
-      /* Only a first-launch guess: see MIN_API_FOR_JIT. The measurement below
-       * replaces it as soon as the launcher has reported one. */
+      /* [B] 只是一个首启猜测：见 MIN_API_FOR_JIT。只要启动器报了测量结果，下面的
+       * 测量就会取代它。 */
       want = kind === 'phone' && api < MIN_API_FOR_JIT;
     } catch (e) {
       const err = e as BusinessError;
-      /*
-       * FAIL OPEN. If the platform will not say what it is, assume the JIT
-       * works. Failing closed would slow the game down for everyone on the
-       * strength of a failed query.
+      /* [A]
+       * 失败即放行。如果平台不肯说它是什么，就假设 JIT 能用。失败即拒绝，会仅凭一次
+       * 查询失败就让所有人玩得更慢。
        */
       hilog.error(DOMAIN, TAG,
         'deviceInfo unavailable (%{public}s) -- assuming the JIT works', err.message);
@@ -1690,30 +1643,24 @@ struct Index {
       want = false;
     }
 
-    /*
-     * THE LAUNCHER'S MEASUREMENT OUTRANKS THE GUESS.
+    /* [A]
+     * 启动器的测量压过猜测。
      *
-     * The device-type rule and the launcher's probe answer different questions.
-     * The rule asks "is this the kind of device that usually cannot get the
-     * memory"; the probe asks "did THIS install get it". Only the second is the
-     * thing the player experiences, and the two disagree more often than the rule
-     * implies:
+     * 设备类型规则和启动器的探测回答的是不同的问题。规则问「这是不是那类通常拿不到
+     * 内存的设备」；探测问「【本次】安装拿到了没有」。只有后者才是玩家体验到的东西，
+     * 而两者不一致的频率比规则所暗示的更高：
      *
-     *   - a phone at API 26, where the rule says JIT and the store package cannot
-     *     be granted the permission at all;
-     *   - a phone at API 26 on a DEBUG install, where the rule says nothing but
-     *     DevEco's debug profile unlocks every permission and the JIT works fine;
-     *   - a tablet without the ACL.
+     *   - 一台 API 26 的手机，规则说是 JIT，而商店包里根本拿不到那个权限；
+     *   - 一台 API 26 的手机、DEBUG 安装，规则什么也没说，但 DevEco 的 debug 配置
+     *     解开了所有权限，JIT 跑得好好的；
+     *   - 一台没有该 ACL 的平板。
      *
-     * Taking the verdict when there is one also REPAIRS the middle case rather
-     * than merely describing it: the rule would have written -Xint and slowed a
-     * device that can perfectly well use the JIT, and one launch later the
-     * measurement switches that back off.
+     * 有结论时就采纳它，也是在【修复】中间那种情况，而不只是描述它：规则本会写下
+     * -Xint，拖慢一台完全能用 JIT 的设备，而一次启动之后测量就会把它改回来。
      *
-     * ⚠️ The guess is still the first-launch answer, and it has to be: on a
-     * device below API 26 there is no verdict yet, and writing nothing would let
-     * the JVM hang before it ever produced one. So the order is
-     * "measured if we have it, guessed if we do not" -- never "assume fine".
+     * ⚠️ 这个猜测仍然是首启的答案，而且必须如此：在低于 API 26 的设备上还没有结论，
+     * 什么都不写会让 JVM 在产生结论之前就卡住。所以顺序是「有测量就用测量，没有就猜」
+     * —— 绝不是「假定没问题」。
      */
     const verdict: string = launcherExecMemoryVerdict();
     if (verdict === 'interp') {
@@ -1724,22 +1671,21 @@ struct Index {
       source = 'launcher measured: executable memory available';
     }
 
-    /* Last and highest: see the note on the order at the top. */
+    /* [B] 最后也最高：见顶部关于顺序的说明。 */
     if (FORCE_COMPAT_MODE) {
       want = true;
       source = 'FORCE_COMPAT_MODE';
     }
-    /*
-     * Logged UNCONDITIONALLY, including the inputs.
+    /* [A]
+     * 【无条件】记录日志，包括输入。
      *
-     * The first version only logged when compat mode turned on, which made its
-     * own correctness unverifiable: "the options file was not written" is also
-     * what a method that never ran produces. A decision needs to report the
-     * inputs it was made from, or the absence of its effect proves nothing.
+     * 第一个版本只在兼容模式开启时才记日志，这让它自己的正确性无法验证：「选项文件
+     * 没被写」也正是一个从未运行的方法会产生的现象。一个决定需要报告它据以做出的输入，
+     * 否则它没有产生效果这件事什么都证明不了。
      *
-     * Measured, on the tablet: "compat mode: device=tablet api=26 ->
-     * interpreted=false", alongside the launcher's "(no options file found;
-     * tried 3 locations)". Two independent observations, agreeing.
+     * 在平板上实测："compat mode: device=tablet api=26 -> interpreted=false"，与
+     * 启动器的 "(no options file found; tried 3 locations)" 并列。两个独立的观察，
+     * 彼此吻合。
      */
     hilog.info(DOMAIN, TAG,
       'compat mode: device=%{public}s api=%{public}d -> interpreted=%{public}s (from %{public}s)',
@@ -1755,111 +1701,98 @@ struct Index {
         fs.closeSync(f);
         hilog.info(DOMAIN, TAG, 'compat mode ON: -Xint written to %{public}s', path);
       } else if (fs.accessSync(path)) {
-        /* accessSync RETURNS a boolean; it does not throw on a missing file.
-         * Treating it as a throwing check is how an app once killed itself
-         * 0.25 s after every start. */
+        /* [A] accessSync 【返回】一个布尔值；文件缺失时它不会抛异常。把它当成会抛
+         * 异常的检查，正是一个应用曾经在每次启动后 0.25 s 自杀的原因。 */
         fs.unlinkSync(path);
         hilog.info(DOMAIN, TAG, 'compat mode off: removed %{public}s', path);
       }
     } catch (e) {
       const err = e as BusinessError;
       hilog.error(DOMAIN, TAG, 'could not set compat mode: %{public}s', err.message);
-      /* Left as it is. A stale -Xint costs speed; a missing one costs the app not
-       * starting at all. Better to keep going than to throw out of aboutToAppear. */
+      /* [A] 保持原样。一个过期的 -Xint 代价是速度；缺了它代价是应用根本起不来。继续
+       * 走下去，比从 aboutToAppear 里抛出去要好。 */
     }
 
   }
 
   build() {
-    /* A Stack so the text field floats over the game instead of reflowing the
-     * game surface to make room for it. */
+    /* [B] 用 Stack，让文本框浮在游戏之上，而不是让游戏表面重排给它腾地方。 */
     Stack({ alignContent: Alignment.Top }) {
     Row() {
       Column() {
-        XComponent({ id: 'SDL_XComponent', type: XComponentType.SURFACE, libraryname: 'SDL3' })
-          .id('SDL_XComponent')
-          /*
-           * Keyboard input needs this component to hold focus.
-           *
-           * ArkUI delivers key events to the focused component only, and SDL
-           * receives them through the callback registered by
-           * OH_NativeXComponent_RegisterKeyEventCallback. With no focus set,
-           * nothing is focused, so no key event ever reaches native code -- which
-           * is silent: SDL never sees a keystroke to report, and the game simply
-           * behaves as though the keyboard is not connected.
-           *
-           * defaultFocus makes it the focus target when the page is built.
-           *
-           * focusOnTouch was here and is deliberately GONE. It made the component
-           * re-take focus on every touch, which put it in a race with the focus
-           * request the keyboard needs: tapping the game's text field produces a
-           * touch on this surface, the request goes out after a poll delay, and if
-           * the finger's remaining touch events land after it, focusOnTouch simply
-           * took focus back. The field was then up but unfocused, so no keyboard.
-           * That is exactly the reported symptom -- "sometimes one tap is enough,
-           * sometimes it is not" -- and a race that depends on how the finger's
-           * events interleave can only ever look intermittent.
-           *
-           * Losing it costs nothing: touch still reaches the game (ArkUI delivers
-           * pointer events by coordinate, not by focus -- only KEY events follow
-           * focus), initial focus still comes from defaultFocus, and every path
-           * that dismisses the keyboard requests focus back explicitly.
-           */
-          .focusable(true)
-          .defaultFocus(true)
-          /*
-           * The earliest key hook, and it must DECLINE (return false).
-           *
-           * Consuming ESC here does fix the system behaviour, but it was measured
-           * to swallow the key before native code ever sees it: SDL logged not
-           * one byte for ESC while a non-ESC control key still arrived normally.
-           * So the cut is specific to consuming, not a general keyboard breakage
-           * -- but it still means the game never gets its ESC, which is not an
-           * acceptable trade.
-           */
-          .onKeyPreIme((e: KeyEvent) => {
-            hilog.info(DOMAIN, TAG, 'onKeyPreIme[X]: keyCode=%{public}d -> consumed=false (pass through)',
-              e.keyCode);
-            return false;
-          })
+        if (!this.shieldBlocked && !this.execProbeFailed) {
+          XComponent({ id: 'SDL_XComponent', type: XComponentType.SURFACE, libraryname: 'SDL3' })
+            .id('SDL_XComponent')
+            /* [A]
+             * 键盘输入需要这个组件持有焦点。
+             *
+             * ArkUI 只把按键事件投递给聚焦的组件，而 SDL 是通过
+             * OH_NativeXComponent_RegisterKeyEventCallback 注册的回调收到它们的。
+             * 没有设置焦点时，没有任何东西聚焦，于是按键事件永远到不了原生代码 ——
+             * 而这是无声的：SDL 从来看不到一个可以上报的按键，游戏的行为就像键盘没
+             * 连上一样。
+             *
+             * defaultFocus 让它在页面构建时成为焦点目标。
+             *
+             * focusOnTouch 曾在这里，现已【刻意去掉】。它让组件在每次触摸时重新夺回
+             * 焦点，从而和键盘所需的焦点请求形成竞争：点游戏的文本框会在本表面上产生
+             * 一次触摸，焦点请求在一次轮询延迟后发出，而如果手指剩余的触摸事件落在它
+             * 之后，focusOnTouch 就干脆把焦点抢了回去。文本框于是弹出来了却没聚焦，
+             * 也就没有键盘。这正是上报的症状 —— 「有时候点一下就够，有时候不够」——
+             * 而一场取决于手指事件如何交错进行的竞争，只能表现为时有时无。
+             *
+             * 去掉它没有任何损失：触摸仍然到得了游戏（ArkUI 按坐标投递指针事件，不
+             * 按焦点 —— 只有【按键】事件跟随焦点），初始焦点仍来自 defaultFocus，而
+             * 每一条收起键盘的路径都会显式请求把焦点要回来。
+             */
+            .focusable(true)
+            .defaultFocus(true)
+            /* [A]
+             * 最早的按键钩子，它必须【拒绝】（返回 false）。
+             *
+             * 在这里消费 ESC 确实能修正系统行为，但实测它会在原生代码看到之前就把
+             * 这个键吞掉：ESC 时 SDL 一个字节都没记到，而非 ESC 的控制键仍然正常到达。
+             * 所以这个断口专属于「消费」，不是普遍性的键盘损坏 —— 但它仍然意味着游戏
+             * 永远拿不到它的 ESC，这不是一笔可以接受的交易。
+             */
+            .onKeyPreIme((e: KeyEvent) => {
+              hilog.info(DOMAIN, TAG, 'onKeyPreIme[X]: keyCode=%{public}d -> consumed=false (pass through)',
+                e.keyCode);
+              return false;
+            })
+        }
       }
       .width('100%')
-      /*
-       * ESC must stop being the system Back button WITHOUT being taken away from
-       * the game. Those two requirements pull in opposite directions, so the
-       * handler is placed on this ANCESTOR rather than on the XComponent, and
-       * that placement is the entire fix.
+      /* [A]
+       * ESC 必须不再充当系统返回键，同时【又】不能被从游戏那里拿走。这两条要求方向
+       * 相反，所以处理器被放在这个【祖先】节点上，而不是 XComponent 上，而这个位置
+       * 就是全部的修复。
        *
-       * The event chain, from one measured ESC press (hilog timestamps):
+       * 事件链，来自一次实测的 ESC 按下（hilog 时间戳）：
        *
-       *   13.965  onKeyPreIme[X]        consumed=false   <- ours, declines
-       *   13.971  onKeyEvent[Column]    consumed=true    <- ours, on the ancestor
-       *   (previously: Ace: OnBackPressed called -- gone once this returned true)
+       *   13.965  onKeyPreIme[X]        consumed=false   <- 我们的，拒绝
+       *   13.971  onKeyEvent[Column]    consumed=true    <- 我们的，在祖先上
+       *   （以前：Ace: OnBackPressed called —— 在它返回 true 之后就不再出现）
        *
-       * The order that matters: onKeyPreIme -> XComponent (its native callback
-       * runs here, and this is where SDL takes the key) -> ancestors. Because
-       * ancestors are reached only *after* the XComponent has dispatched to
-       * native code, consuming here cannot deprive the game of anything.
+       * 要紧的顺序：onKeyPreIme -> XComponent（它的原生回调在这里运行，SDL 就是在这里
+       * 拿到键的）-> 祖先。因为祖先只有在 XComponent 已经派发给原生代码【之后】才会被
+       * 触达，在这里消费不可能从游戏那里夺走任何东西。
        *
-       * An `onKeyEvent` attached to the XComponent itself, by contrast, is never
-       * invoked at all -- the native XComponent path takes precedence over it.
-       * That is a dead end regardless of what it returns, and was measured as
-       * such (its log line appeared zero times). Do not move this handler back.
+       * 相比之下，挂在 XComponent 自身上面的 `onKeyEvent` 根本永远不会被调用 —— 原生
+       * XComponent 路径优先于它。无论它返回什么，那都是条死路，而且实测如此（它那行日志
+       * 出现了零次）。不要把处理器挪回去。
        *
-       * Callback semantics on the native side are worth recording too:
-       * SDL_OpenHarmonyDispatchKeyEvent returns void, so native code has no way
-       * to report "I consumed this". The decision can only be made in ArkUI,
-       * which is why this is not solved in C.
+       * 原生侧的回调语义也值得记下：SDL_OpenHarmonyDispatchKeyEvent 返回 void，所以
+       * 原生代码没办法报告「我消费了这个」。这个决定只能在 ArkUI 里做，这就是为什么
+       * 它没有在 C 里解决。
        *
-       * ONLY ESC is consumed; every other key returns false so gameplay input and
-       * text entry (which needs the IME) are unaffected.
+       * 【只有】ESC 会被消费；其他每个键都返回 false，好让游戏输入和文本录入（需要
+       * IME）不受影响。
        *
-       * The hilog lines are not decoration. A silently-never-called handler
-       * already cost this project a round: an earlier attempt used the
-       * nonexistent name `onBackPress`, which compiles, runs, and is invoked
-       * exactly zero times, looking for all the world like a fix that simply did
-       * not work. If these lines do not appear in hilog, the handler is not
-       * running and the result means nothing.
+       * 这些 hilog 行不是装饰。一个无声地从不被调用的处理器已经让本项目付出过一轮
+       * 代价：早先的尝试用了不存在的名字 `onBackPress`，它能编译、能运行、被调用的
+       * 次数恰好是零，看起来活像一个「就是没生效」的修复。如果这些行没出现在 hilog
+       * 里，说明处理器没在跑，结果也就毫无意义。
        */
       .onKeyEvent((e: KeyEvent) => {
         const esc = e.keyCode === KeyCode.KEYCODE_ESCAPE;
@@ -1870,36 +1803,29 @@ struct Index {
     }
     .height('100%')
 
-      /*
-       * Appears only while a text field inside the game is focused. Single-line:
-       * the command protocol is line-based, and Mindustry's fields (a save name,
-       * a filename) are single-line anyway.
+      /* [B]
+       * 只在游戏内有文本框聚焦时出现。单行：命令协议是基于行的，而 Mindustry 的
+       * 文本框（存档名、文件名）本来也是单行。
        */
       if (this.showIme) {
-        /*
-         * Invisible on purpose: the user reads what they typed in the GAME's own
-         * field, which updates as they type, so showing a second field was both
-         * redundant and confusing. With this hidden, the visible result is the
-         * system keyboard driving Mindustry directly.
+        /* [A]
+         * 刻意不可见：用户在【游戏】自己的文本框里看到自己打的内容，那个框随打字更新，
+         * 所以再显示第二个框既多余又让人困惑。有了这个隐藏，可见的结果就是系统键盘在
+         * 直接驱动 Mindustry。
          *
-         * It still has to exist, be focusable, and hold the IME -- an invisible
-         * component with focus is what keeps the keyboard up. If the input method
-         * ever refuses to appear for a zero-opacity field, this is the line to
-         * revisit: give it opacity 0.01 instead.
+         * 它仍然必须存在、可聚焦、并持有 IME —— 一个不可见但持有焦点的组件，才是让
+         * 键盘保持弹起的东西。如果输入法哪天拒绝为一个零透明度文本框出现，要改的就是
+         * 这一行：给它 0.01 的透明度。
          *
-         * It sits over the GAME's field, rather than at the top of the screen as
-         * it used to. That placement is the entire mechanism: the framework's
-         * keyboard avoidance moves the page only until this focused field is
-         * visible, so putting it where the player is actually looking makes the
-         * framework move the game by precisely the amount that reveals that spot.
-         * Anchored at the top it asked for nothing, so nothing moved and the
-         * keyboard covered the field.
+         * 它盖在【游戏】的文本框上，而不是像过去那样在屏幕顶部。那个位置就是整个机制：
+         * 框架的键盘避让只会把页面上推到这个聚焦文本框可见为止，所以把它放到玩家实际
+         * 正在看的地方，就能让框架把游戏移动恰好露出那一处的距离。锚在顶部时它什么都
+         * 没要求，于是什么都没动，键盘就把文本框盖住了。
          */
         TextInput()
           .id('ime_ui_field')
-          /* Anchored on the field's top-left, and taller than it only while the
-           * keyboard is actually up. See IME_FIELD_MARGIN_VP for why the margin
-           * exists and why a hidden keyboard must not have it. */
+          /* [B] 锚在文本框的左上角，且只在键盘真正弹起时比它更高。margin 为什么存在、
+           * 以及为什么键盘隐藏时不能有它，见 IME_FIELD_MARGIN_VP。 */
           .position({ x: this.imeFieldX, y: this.imeFieldY })
           .width(this.imeFieldW)
           .height(this.imeFieldH + (this.imeUserHid ? 0 : IME_FIELD_MARGIN_VP))
@@ -1909,38 +1835,32 @@ struct Index {
           })
           .onFocus(() => {
             this.imeFieldFocused = true;
-            /* The user asked for the keyboard -- by tapping this field, which is
-             * still on screen over the game's field precisely so that it can be
-             * tapped again. Whatever they did before is spent. */
+            /* [B] 用户主动要了键盘 —— 靠点这个文本框，它之所以还留在屏幕上、盖在游戏
+             * 的文本框上，正是为了还能再被点到。他之前做过的都作废了。 */
             this.imeUserHid = false;
           })
           .onBlur(() => {
-            /*
-             * The keyboard was put away. Pressing the system keyboard's own hide
-             * button and tapping away from the field both land here, and both
-             * mean the same thing: it is not to come back on its own.
+            /* [A]
+             * 键盘被收起来了。按系统键盘自带的隐藏按钮、以及点文本框之外的地方，都会
+             * 落到这里，两者含义相同：它不该自己回来。
              *
-             * WHY THE GAME'S REQUEST CANNOT DECIDE THIS
-             *   `ime_want` says what the GAME wants, and the game never learns
-             *   that the user hid the keyboard: its own field is still focused, so
-             *   SDL never calls HideScreenKeyboard and the request file stays on
-             *   disk. Measured symptom, before this flag existed: dismissing the
-             *   keyboard brought it straight back -- the poll saw "field up, no
-             *   focus, game still asking" and took the focus again.
+             * 为什么游戏自己的请求决定不了这件事
+             *   `ime_want` 说的是【游戏】想要什么，而游戏永远不会知道用户把键盘藏了：
+             *   它自己的文本框仍然聚焦，所以 SDL 从不调用 HideScreenKeyboard，请求
+             *   文件就一直留在磁盘上。这个标志存在之前实测到的症状：收起键盘，它立刻
+             *   又回来了 —— 轮询看到「文本框在、无焦点、游戏还在要」，于是又把焦点拿
+             *   了回来。
              *
-             * Our own dismissals never reach here: dismissIme() clears
-             * imeFieldFocused before the field is unmounted, so this test is
-             * false. That is what keeps the two paths apart.
+             * 我们自己的收起从不到达这里：dismissIme() 在文本框被卸载之前就清掉了
+             * imeFieldFocused，所以这个判断为假。正是它把两条路径分了开来。
              *
-             * A stolen focus is indistinguishable from a hide and is now treated
-             * as one. That is recoverable rather than fatal, which is the reason
-             * it is acceptable: this field is still sitting over the game's field,
-             * so one tap raises the keyboard again, where the burst-of-five that
-             * this replaced could leave it permanently dead.
+             * 一次被抢走的焦点和一次用户收起无法区分，现在也按收起处理。这是可恢复的
+             * 而不是致命的，也就是它可以接受的原因：这个文本框仍然盖在游戏的文本框上，
+             * 所以点一下就能再次唤起键盘，而它所取代的那套「五次连发」可能让它永久
+             * 死掉。
              *
-             * Clearing is deliberately NOT time-based. The user is not asked to
-             * act within any window -- they can leave the keyboard down for as
-             * long as they like and a tap still brings it back.
+             * 清除刻意【不】基于时间。不要求用户在任何时间窗内行动 —— 他们愿意把键盘
+             * 放多久都行，点一下仍能把它带回来。
              */
             if (this.imeFieldFocused) {
               this.imeUserHid = true;
@@ -1948,49 +1868,43 @@ struct Index {
             this.imeFieldFocused = false;
           })
           .onSubmit(() => {
-            /* Done on the keyboard: put the game back in charge of input. */
+            /* [B] 在键盘上按了完成：把输入的控制权交还给游戏。 */
             this.dismissIme();
           })
       }
 
-      /*
-       * The floating ball, and the menu it opens.
+      /* [A]
+       * 悬浮球，以及它打开的菜单。
        *
-       * It is a ball rather than a labelled button for a practical reason: it has to
-       * sit on top of a game, and a small circle is the least it can possibly cover.
-       * A fixed button in a corner would either be in the way or too small to hit.
+       * 用球而不是带标签的按钮，有个实际的理由：它必须待在游戏之上，而一个小圆是它
+       * 尽可能小的遮盖。角落里一个固定的按钮，要么挡路，要么小到点不中。
        *
-       * It opens a menu rather than acting on tap because it is meant to carry
-       * several functions; the control scheme is the first, so the tap has to mean
-       * "show me what you can do" rather than "do the one thing".
+       * 点一下是打开菜单而不是直接执行，因为它注定要承载多个功能；操作方案是第一个，
+       * 所以这次点击必须表示「给我看看你能做什么」，而不是「做那一件事」。
        *
-       * WHY focusable(false) -- this is load-bearing, not cosmetic. ArkUI delivers
-       * key events to the focused component only, and the XComponent needs that focus
-       * or SDL never sees a keystroke and the keyboard stops working entirely. A
-       * focusable ball in this Stack would take it. Click and touch still work
-       * without focus; only keyboard focus is withheld.
+       * 为什么 focusable(false) —— 这是承重的，不是装饰。ArkUI 只把按键事件投递给
+       * 聚焦的组件，而 XComponent 需要那份焦点，否则 SDL 永远看不到按键，键盘就彻底
+       * 失效。这个 Stack 里一个可聚焦的球会把它抢走。没有焦点时点击和触摸仍然有效；
+       * 被扣下的只是键盘焦点。
        *
-       * Drawn as a bordered circle rather than with the Circle shape component so the
-       * label can live inside it without a second layout pass.
+       * 画成一个带边框的圆，而不是用 Circle 形状组件，这样标签可以直接放在它里面，
+       * 不必再走一次布局。
        */
       Stack() {
-        /*
-         * The game's own turret, not a glyph.
+        /* [A]
+         * 游戏自己的炮塔，而不是一个字模。
          *
-         * A gear was tried and rendered -- but it is a font character, so its weight
-         * and its teeth depend on whichever font the device happens to supply, and it
-         * reads as "settings" for what is really a menu of several functions.
+         * 试过齿轮并且渲染出来了 —— 但它是一个字体字符，所以它的粗细和齿形取决于设备
+         * 恰好提供的哪套字体，而且它读起来像「设置」，可这里其实是一个多功能的菜单。
          *
-         * This is the same 32x32 turret the app icon is built from, so the ball
-         * matches the icon the player tapped to get here. It is a bitmap, so it also
-         * stops depending on the device's fonts at all.
+         * 这就是应用图标所用的同一张 32x32 炮塔，所以球和玩家点进来时点的那个图标是
+         * 一致的。它是位图，所以也彻底不再依赖设备的字体。
          *
-         * Interpolation.None is what keeps it from going soft: the source is an exact
-         * integer multiple of the sprite's own 34px, and nearest-neighbour scaling is
-         * what keeps pixel art looking drawn rather than blurred.
+         * Interpolation.None 是让它不发糊的原因：源图恰好是该 sprite 自身 34px 的整数
+         * 倍，而最近邻缩放才是让像素画看起来像画出来的、而不是模糊的原因。
          *
-         * draggable(false): the ball's drag is handled by the Stack's onTouch. A
-         * draggable image inside it would start its own drag and fight that.
+         * draggable(false)：球的拖动由 Stack 的 onTouch 处理。它里面一张可拖动的图片
+         * 会启动自己的拖动，跟那个打架。
          */
         Image($r('app.media.ball_icon'))
           .width(Math.round(this.ballSizeVp * 0.62))
@@ -2004,11 +1918,10 @@ struct Index {
       .backgroundColor(this.ballMenu ? '#cc1d2733' : '#99101820')
       .borderWidth(1)
       .borderColor('#66ffffff')
-      /*
-       * The half-hide lives HERE and nowhere else. ballX/ballY keep holding the
-       * revealed position, so dragging, clamping, snapping and the saved file all
-       * agree on one set of coordinates -- moving ballX instead would make every one
-       * of them have to reason about how hidden the ball currently is.
+      /* [A]
+       * 半隐藏在【这里】，别处没有。ballX/ballY 始终保存着露出的位置，所以拖动、clamp、
+       * 吸附和存下的文件全都一致地基于同一套坐标 —— 改成移动 ballX 会让它们每一个都
+       * 得去考虑球当前隐藏到什么程度。
        */
       .position({ x: this.ballX + this.ballHideDx(), y: this.ballY + this.ballHideDy() })
       .opacity(this.ballHidden ? BALL_OPACITY_HIDDEN : 1)
@@ -2017,15 +1930,13 @@ struct Index {
 
       if (this.ballMenu) {
         Column() {
-          /*
-           * Entry: which control scheme is in force, and the switch.
+          /* [A]
+           * 条目：当前生效的是哪套操作方案，以及那个切换开关。
            *
-           * A real choice has to be made before the game starts: Mindustry derives
-           * its entire input layer AND its UI from one bit, Vars.mobile, written once
-           * in Vars.init(). Its own in-game switch changes only the input handler, so
-           * it gives desktop controls on a mobile UI -- measured on the tablet, and
-           * confirmed in the bytecode. Hence the restart, which is stated plainly
-           * rather than hidden.
+           * 一个真正的选择必须在游戏启动【之前】做出：Mindustry 的整个输入层【和】UI
+           * 都派生自一个位 —— Vars.mobile —— 在 Vars.init() 里写一次。它自带的游戏内
+           * 开关只改输入处理器，所以会在移动端 UI 上给出桌面控制 —— 在平板上实测过，
+           * 并在字节码里确认过。因此需要重启，这一点被明白说出，而不是藏起来。
            */
           Row() {
             Text(this.controlMode === CONTROL_MODE_DESKTOP ? 'PC 模式' : '触屏模式')
@@ -2038,52 +1949,43 @@ struct Index {
           .height(BALL_MENU_ROW_VP)
           .onClick(() => { this.toggleControlMode(); })
 
-          /*
-           * A hairline, not a margin.
+          /* [B]
+           * 一条细线，不是一个 margin。
            *
-           * Two labels on one card read as one run of text however far apart they
-           * are; the separator is what says these are two choices. It also makes
-           * the vertical span obvious, which is the half of the problem a larger
-           * gap alone would not fix.
+           * 同一张卡片上的两个标签，无论隔多远都会被读成一段文字；分隔线才是说明「这是
+           * 两个选择」的东西。它也让纵向跨度变得明显，而那是单靠一个更大的间隙修不好的
+           * 那一半问题。
            */
           Divider()
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
-          /*
-           * There was an "导入模组" row here (select a file → copy it into the mods
-           * directory) and it has been REMOVED, deliberately, along with the two
-           * other ways this app used to put files there on its own.
+          /* [A]
+           * 这里【曾经】有一行 "导入模组"（选一个文件 → 把它复制进模组目录），它已被
+           * 【删除】，是刻意的，和这个应用过去自行往那里放文件的另外两种方式一起。
            *
-           * WHY. All three made the app decide when a mod exists, and the player
-           * could not undo that decision from inside the game. The one that did
-           * the damage copied anything in the app's Downloads folder into the mods
-           * directory at every launch, skipping only files already present at the
-           * same size -- so deleting a mod in the game (which deletes it from the
-           * sandbox) brought it straight back on the next launch, forever. That
-           * folder is ALSO the root the game's own file browser opens in, and
-           * saves are .zip, so a save sitting there was swept into the mods
-           * directory as though it were a mod.
+           * 为什么。这三种方式全都让应用自己决定一个模组何时存在，而玩家无法在游戏内
+           * 撤销那个决定。造成伤害的那一种，每次启动都把应用 Downloads 文件夹里的任何
+           * 东西复制进模组目录，只跳过已在、且大小相同的文件 —— 于是在游戏里删掉一个
+           * 模组（也就是把它从沙箱里删掉）会在下次启动时直接把它带回来，永远如此。那个
+           * 文件夹【也】是游戏自带文件浏览器打开的根目录，而存档是 .zip，所以放在那里的
+           * 一个存档会被当成模组一样扫进模组目录。
            *
-           * ⇒ The one way in is now the GAME'S OWN import button, which is manual
-           *   by construction: the player picks a file and the game copies it. It
-           *   works here (confirmed on the device) and needs no code from us. The
-           *   Downloads folder is still created and still serves as the browser's
-           *   root -- so a mod dropped there is still reachable, it just has to be
-           *   picked rather than being taken.
+           * ⇒ 现在唯一的入口是【游戏自带的】导入按钮，它按构造就是手动的：玩家挑一个
+           *   文件，游戏复制它。它在这里能用（已在设备上确认），不需要我们写任何代码。
+           *   Downloads 文件夹仍然会被创建、仍然充当浏览器的根目录 —— 所以丢在那里的一
+           *   个模组仍然够得到，只是必须被选中，而不是被自动取走。
            *
-           * ⚠️ The row count is derived (BALL_MENU_ROWS), so removing a row is not
-           * a one-line change: that constant feeds BALL_MENU_H_VP, which ballMenuY
-           * clamps against.
+           * ⚠️ 行数是推导出来的（BALL_MENU_ROWS），所以删掉一行不是一行的改动：那个常量
+           * 喂给 BALL_MENU_H_VP，而 ballMenuY 要拿它做 clamp。
            */
 
-          /*
-           * Entry: who made this, where it lives, and what it is not.
+          /* [B]
+           * 条目：谁做的、它住在哪、以及它【不是】什么。
            *
-           * A port that is not on any store yet gets asked "where do I get it /
-           * where do I report a bug / is this official" -- and the answers need
-           * to be reachable from inside the app, because the player is already
-           * in it when the question comes up.
+           * 一个还没上任何商店的移植版会被人问「在哪下载 / 在哪报 bug / 这是官方的吗」
+           * —— 而这些答案需要在应用内部够得到，因为问题冒出来的时候，玩家已经在应用
+           * 里了。
            */
           Row() {
             Text('关于')
@@ -2100,17 +2002,16 @@ struct Index {
             .strokeWidth(BALL_MENU_DIVIDER_VP)
             .color('#22ffffff')
 
-          /*
-           * Support, in one tap.
+          /* [A]
+           * 一键求助。
            *
-           * The app already exports a crash report by itself, but only when there
-           * IS one -- and the case that is hardest to act on has no crash at all
-           * ("it will not start", "it misbehaves"). On a release-signed install
-           * nothing outside the app can read the sandbox, so without this the
-           * answer to "please send me the log" is "there is no way to get it".
+           * 应用本来就自己导出崩溃报告，但只在【有】崩溃时 —— 而最难处理的情况恰恰
+           * 根本没有崩溃（「它起不来」「它行为异常」）。在 release 签名的安装上，应用
+           * 之外的任何东西都读不了沙箱，所以没有这个按钮，「把日志发给我」的回答就是
+           * 「拿不到」。
            *
-           * It writes to the app's Downloads folder, which is where a player
-           * already knows how to look because it is the same place mods go.
+           * 它写到应用的 Downloads 文件夹 —— 玩家本来就知道去那里找，因为模组去的是
+           * 同一个地方。
            */
           Row() {
             Text('导出诊断')
@@ -2132,22 +2033,19 @@ struct Index {
         .position({ x: this.ballMenuX(), y: this.ballMenuY() })
         .focusable(false)
       }
-    /*
-     * The About card -- a Stack child that covers everything, including the
-     * floating ball, which would otherwise float on top of it.
+    /* [A]
+     * About 卡片 —— 一个 Stack 子节点，盖住一切，包括悬浮球，否则球会浮在它上面。
      *
-     * NO FOCUSABLE COMPONENT ANYWHERE. A dialog or a Button takes focus from the
-     * XComponent, and the game then stops seeing the keyboard. So the card is not
-     * focusable and holds nothing that is; the dimmed area itself is the dismiss
-     * button.
+     * 任何地方都【没有可聚焦组件】。对话框或 Button 会从 XComponent 那里夺走焦点，
+     * 游戏然后就看不到键盘了。所以这张卡片不可聚焦，里面也不放任何可聚焦的东西；变暗
+     * 的区域本身就是关闭按钮。
      *
-     * (A compatibility notice used to sit here and was built the same way. It is
-     * gone -- see the header comment -- so this is now the only such overlay.)
+     * （曾经有一个兼容性提示也坐在这里，用同样的方式构建。它已经没了 —— 见文件头注释
+     * —— 所以现在这是唯一一个这类覆盖层。）
      *
-     * The addresses are plain Text rather than links, and that is the price of
-     * that rule: making them tappable would need either a focusable component or
-     * a clipboard permission, and neither is worth breaking the keyboard for.
-     * Anyone who wants the repository can read it off the card.
+     * 那些地址是纯 Text 而不是链接，这就是那条规则的代价：要让它们可点，要么需要一个
+     * 可聚焦组件，要么需要剪贴板权限，而两者都不值得为它搞坏键盘。想要仓库地址的人可以
+     * 从卡片上把它抄下来。
      */
     if (this.showAbout) {
       Column() {
@@ -2169,15 +2067,13 @@ struct Index {
             .fontSize(12)
             .fontColor('#8fb4ff')
             .margin({ top: 16 })
-          /*
-           * With the scheme, because without it a bare "github.com/..." reads like
-           * a path or a package name rather than an address. Reported from the
-           * device -- it looks odd -- and it does.
+          /* [A]
+           * 带上协议头，因为没有它，光秃秃的 "github.com/..." 读起来像一条路径或一个包
+           * 名，而不是一个网址。设备上报过 —— 它看起来怪 —— 确实怪。
            *
-           * These two lines are the longest text on the card, and the Issues one
-           * is 47 characters. That is why they are set smaller than the body: at
-           * the body size the longest would not fit the card on a phone and would
-           * wrap mid-address, which is worse than being small.
+           * 这两行是卡片上最长的文字，而 Issues 那行有 47 个字符。这就是它们被排得比正文
+           * 小的原因：用正文字号，最长的那一行在手机上放不进卡片，会在地址中间折行，那比
+           * 字号小更糟。
            */
           Text('https://github.com/haohandc/MindustryArk')
             .fontSize(12)
@@ -2209,62 +2105,131 @@ struct Index {
             .fontColor('#80FFFFFF')
             .margin({ top: 16 })
         }
-        /* 92% and 18, not 86% and 22: the two addresses are the widest text here
-         * and this is what gives them a line to sit on. Measured against the
-         * phone's window width -- see the note on the address lines above. */
+        /* [A] 92% 和 18，而不是 86% 和 22：那两个地址是这里最宽的文字，而这就是给它们
+         * 一条能放下的行宽。对着手机的窗口宽度实测过 —— 见上面关于地址行的说明。 */
         .padding(18)
         .backgroundColor('#F01C1C1C')
         .borderRadius(14)
         .width('92%')
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor('#B0000000')
-      .justifyContent(FlexAlign.Center)
-      .focusable(false)
-      .onClick(() => { this.showAbout = false; })
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#B0000000')
+        .justifyContent(FlexAlign.Center)
+        .focusable(false)
+        .onClick(() => { this.showAbout = false; })
+      }
+      /* [A]
+       * ⚠️ 顺序很重要 —— 这个块声明在坚盾提示【之前】，把它挪到后面会破坏坚盾那种
+       * 情况。
+       *
+       * 在 Stack 里，靠后的子节点画在上层，所以当两个提示同时为真时，它们中【最后】的
+       * 那个胜出。在一台处于坚盾模式的设备上两者都为真（坚盾模式是可执行内存丢失的
+       * 一种途径），而坚盾提示才是可操作的那一个：它指出了要关掉的设置。这一个只能说
+       * 「通常是暂时的，点一下重新检测」，而在坚盾模式开着时那是没用的建议 —— 点它
+       * 重新检测会一直失败，直到那个设置改变。
+       *
+       * 2026-09-28 实测，在这次移动之前：坚盾模式【开着】时设备显示的是【这个】提示，
+       * 而坚盾提示被完全遮住了。那比用户在这个闸门存在之前所掌握的信息【还少】。
+       *
+       * 按现在的顺序：
+       *   shield ON            -> 坚盾提示，它说明怎么关掉它
+       *   shield OFF, no memory -> 这个提示，它提供重新检测
+       */
+      if (this.execProbeFailed) {
+        Column() {
+          Column() {
+            Text('现在无法启动').fontSize(22).fontColor('#FFFFFF')
+            Text('系统当前不允许应用申请可执行内存，游戏所需的 Java 虚拟机无法创建。')
+              .fontSize(14).fontColor('#E0FFFFFF').margin({ top: 14 })
+            Text('这通常是暂时的。')
+              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
+            Text('点击任意位置重新检测')
+              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
+          }
+          .padding(20).backgroundColor('#F01C1C1C').borderRadius(14).width('90%')
+        }
+        .width('100%').height('100%').backgroundColor('#B0000000')
+        .justifyContent(FlexAlign.Center)
+        .focusable(false)
+        .onClick(() => { this.recheckExecMemory(); })
+      }
+      if (this.shieldBlocked) {
+        Column() {
+          Column() {
+            Text('无法启动').fontSize(22).fontColor('#FFFFFF')
+            Text('本机当前开启了「坚盾守护模式」，系统不允许应用申请可执行内存，游戏所需的 Java 虚拟机无法创建。')
+              .fontSize(15).fontColor('#E0FFFFFF').margin({ top: 14 })
+            Text('请关闭该模式后重新打开应用。关闭路径：设置 → 隐私和安全 → 坚盾守护模式。')
+              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
+            Text('点击任意位置退出')
+              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
+          }
+          .padding(20).backgroundColor('#F01C1C1C').borderRadius(14).width('90%')
+        }
+        .width('100%').height('100%').backgroundColor('#B0000000')
+        .justifyContent(FlexAlign.Center).focusable(false)
+        .onClick(() => {
+          const ctx = getContext(this) as common.UIAbilityContext;
+          ctx.terminateSelf().catch((err: BusinessError) => {
+            hilog.error(DOMAIN, TAG, 'terminateSelf failed: %{public}s', err.message);
+          });
+        })
+      }
+      if (this.jvmIncomplete) {
+        Column() {
+          Column() {
+            Text('上次启动未完成').fontSize(22).fontColor('#FFFFFF')
+            Text('上一次运行时，游戏所需的 Java 虚拟机没有创建成功，下面是它中断前的最后记录：')
+              .fontSize(14).fontColor('#E0FFFFFF').margin({ top: 14 })
+            Text(this.jvmFaults)
+              .fontSize(12).fontColor('#B0FFD0A0').margin({ top: 10 })
+            Text('点击任意位置继续启动')
+              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
+          }
+          .padding(20).backgroundColor('#F01C1C1C').borderRadius(14).width('90%')
+        }
+        .width('100%').height('100%').backgroundColor('#B0000000')
+        .justifyContent(FlexAlign.Center)
+        .focusable(false)
+        .onClick(() => { this.jvmIncomplete = false; })
+      }
     }
-    }
-    /* The only job of this modifier is to learn the window size, once, so the ball
-     * can be placed and clamped against the right rectangle. */
+    /* [B] 这个修饰符唯一的任务就是学到窗口尺寸，一次，好让球能对着正确的矩形摆放和
+     * clamp。 */
 
     .onAreaChange((_o: Area, n: Area) => {
       this.onWindowSize(Number(n.width), Number(n.height));
     })
-    /*
-     * ESC, at the Stack: the common ancestor of the game surface and our field,
-     * and therefore the only node that sees the key whichever of the two is
-     * focused.
+    /* [A]
+     * ESC，放在 Stack 上：游戏表面和我们文本框的共同祖先，因此是这两者无论哪一个聚焦
+     * 都能看到这个键的唯一节点。
      *
-     * Focus is singular, and that is the whole reason BOTH hooks below exist:
+     * 焦点是单一的，这正是下面【两个】钩子都存在的原因：
      *
-     *   field focused    -> the Column is not in the focus chain, so its handler
-     *                       never runs, and the key must be caught here
-     *   game focused     -> the Column IS in the chain, and its handler is enough
+     *   文本框聚焦    -> Column 不在焦点链上，所以它的处理器永远不会运行，键必须在
+     *                    这里接住
+     *   游戏聚焦      -> Column 【在】链上，它的处理器就够用了
      *
-     * onKeyPreIme has to come first because onKeyEvent on an ancestor was measured
-     * NOT to fire while the TextInput holds focus -- the field consumes the key
-     * before the ancestor sees it. So the onKeyEvent below is the fallback, not
-     * the primary.
+     * onKeyPreIme 必须排在前面，因为实测祖先上的 onKeyEvent 在 TextInput 持有焦点时
+     * 【不】触发 —— 文本框在祖先看到它之前就把键消费了。所以下面的 onKeyEvent 是后备，
+     * 不是主选。
      *
-     * Consumed ONLY while our field is up. Consuming it when the game has focus is
-     * what once made SDL see nothing at all for ESC -- the XComponent's native
-     * callback runs *after* this hook -- and that cost a round to find. Returning
-     * false in that case lets it through untouched.
+     * 【只在】我们的文本框弹起时消费。在游戏聚焦时消费它，就是曾让 SDL 对 ESC 什么
+     * 都看不到的原因 —— XComponent 的原生回调在这个钩子【之后】运行 —— 而这花了一轮
+     * 才找到。那种情况下返回 false 就能让它原样通过。
      *
-     * What consuming does: forwards ESC into the game (so the game closes its own
-     * dialog, which is what actually releases the field and stops the request),
-     * and latches the dismissal locally so the next poll cannot undo it.
+     * 消费做了什么：把 ESC 转发进游戏（于是游戏关掉它自己的对话框，那才是真正释放
+     * 文本框、停止请求的动作），并在本地锁存这次收起，好让下一次轮询无法把它撤销。
      *
-     * Returning true matters separately from the forwarding: it is what stops
-     * HarmonyOS from treating ESC as Back and dropping the app to the home screen.
+     * 返回 true 与转发是两回事：它是阻止 HarmonyOS 把 ESC 当作返回、把应用丢回桌面的
+     * 东西。
      */
     .onKeyPreIme((e: KeyEvent) => {
       const esc: boolean = e.keyCode === KeyCode.KEYCODE_ESCAPE;
-      /* Logged unconditionally. Whether an ancestor's onKeyPreIme fires while a
-       * descendant TextInput holds focus is the premise this fix rests on, and it
-       * is not obvious -- so if ESC misbehaves again, these lines say whether the
-       * premise held, instead of leaving the failure ambiguous. */
+      /* [A] 无条件记录日志。一个祖先的 onKeyPreIme 在后代 TextInput 持有焦点时是否
+       * 触发，正是这个修复所依赖的前提，而它并不显然 —— 所以万一 ESC 再次出问题，
+       * 这些行会说明那个前提是否成立，而不是让这次失败含糊不清。 */
       hilog.info(DOMAIN, TAG, 'onKeyPreIme[Stack]: keyCode=%{public}d showIme=%{public}s -> consumed=%{public}s',
         e.keyCode, String(this.showIme), String(esc && this.showIme));
       if (esc && this.showIme) {
@@ -2277,9 +2242,9 @@ struct Index {
     .onKeyEvent((e: KeyEvent) => {
       const esc: boolean = e.keyCode === KeyCode.KEYCODE_ESCAPE;
       if (esc && this.showIme) {
-        /* Same action as the hook above, kept as a net for the case where the
-         * key arrives by a path that skips onKeyPreIme. Returning true either way,
-         * because HarmonyOS must not treat ESC as Back. */
+        /* [B] 和上面那个钩子同样的动作，留作一张网，用于键从一条跳过 onKeyPreIme 的
+         * 路径到达的情况。两种情况下都返回 true，因为 HarmonyOS 绝不能把 ESC 当作
+         * 返回。 */
         this.appendCmd('E' + '\n');
         this.dismissIme();
         return true;
