@@ -86,14 +86,35 @@ TMP = os.environ.get("TEMP") or os.environ.get("TMPDIR") or "/tmp"
 # ---------------------------------------------------------------------------
 PAYLOAD_SRC = _env("ARK_PAYLOAD_SRC", os.path.join(PROJECT_ROOT, "payload-src"))
 
-# The upstream Mindustry release jar. Replaceable by anyone: the patch script
-# identifies the build by content, not by name.
+# ⭐ THE SHIPPED GAME JAR. This is the upstream release, byte for byte -- ours is
+# not written into it at all under the current architecture. Our Arc changes ship
+# as a separate jar that goes ahead of it on the class path; see make_patch_jar.py
+# and PATCH_JAR in launcher.c.
+#
+# Replaceable by anyone: prep_game.py identifies the build by its SHA-1, not by
+# its file name.
 UPSTREAM_JAR = _env("ARK_UPSTREAM_JAR", os.path.join(PAYLOAD_SRC, "Mindustry.jar"))
 
-# Produced from UPSTREAM_JAR by patch_mindustry.py, then by build_variants.py.
-# Kept under the same directory so the chain can be re-run in place.
+# ⚠️ Renamed from GAME_JAR on 2026-09-28. It is NOT the game jar any more, and the
+# old name had already caused a wrong conclusion: with the pristine jar as
+# UPSTREAM_JAR, "GAME_JAR" pointed at a DIFFERENT file, and prep_arc.py reads its
+# natives through this name. Changing where it points would have put upstream's
+# audio-less libarcarm64.so into the bundle.
+#
+# What it is: the jar that carries OUR Arc native libraries, which prep_arc.py
+# extracts into entry/libs/arm64-v8a/arc/. Built from UPSTREAM_JAR by
+# build_variants.py -- the one thing in the pipeline that is NOT reproducible from
+# this repository (the compile recipe for libarcarm64.so is not in it).
+NATIVES_JAR = _env("ARK_NATIVES_JAR", os.path.join(PAYLOAD_SRC, "mindustry-1.0-audio.jar"))
+
+# Produced from UPSTREAM_JAR by patch_mindustry.py. SUPERSEDED 2026-09-28: our
+# classes now ship in the patch jar instead of being written into the game jar, so
+# nothing in the build reads this. Kept because build_variants.py still does, and
+# both scripts are kept as the record of what the old chain did.
 PATCHED_JAR = _env("ARK_PATCHED_JAR", os.path.join(PAYLOAD_SRC, "mindustry-1.0.jar"))
-GAME_JAR = _env("ARK_GAME_JAR", os.path.join(PAYLOAD_SRC, "mindustry-1.0-audio.jar"))
+
+# Back-compat alias. Remove once nothing references it.
+GAME_JAR = NATIVES_JAR
 
 # Arc's sources, for the three classes that are recompiled into the jar.
 ARC_SRC = _env("ARK_ARC_SRC", r"C:\Users\Haohandc\Arc")
@@ -151,7 +172,7 @@ APP_NAME = "MindustryArk"
 # So the leading "v" belongs to the release tag and the artifact name, never to
 # the version name, and the safe alphabet for both is digits, letters, dot,
 # underscore and hyphen.
-APP_VERSION = "1.0.0.2"
+APP_VERSION = "1.1.0.1"
 
 # versionCode is the integer the platform actually orders installs by.
 #
@@ -201,7 +222,7 @@ APP_VERSION = "1.0.0.2"
 # than a downgrade, so anyone already on `0.3.0.1` installs this in place. The
 # reverse is not true: once a 1.0.0 build is out, going back to any 0.x is a
 # downgrade and the platform refuses it.
-VERSION_CODE = 1000002
+VERSION_CODE = 1010001
 
 
 def version_code_for(version):

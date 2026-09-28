@@ -45,9 +45,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
-# The same pinned build prep_game.py ships, so the natives and the Java classes
-# that call into them cannot be taken from two different jars.
-JAR = config.GAME_JAR
+# ⚠️ NOT the shipped game jar. This is the jar that carries OUR Arc natives, and
+# it is a different file from UPSTREAM_JAR -- the one that ships. They were called
+# GAME_JAR and UPSTREAM_JAR until 2026-09-28, which read as though they were the
+# same thing; see the note in config.py.
+#
+# Pointing this at the pristine upstream jar would put upstream's audio-less
+# libarcarm64.so into the bundle. The NATIVES pins below would catch it, but the
+# build would stop rather than ship, and the reason would look like a hash
+# mismatch rather than a wrong input.
+JAR = config.NATIVES_JAR
 DEST_DIR = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "arc")
 
 # name inside the jar -> sha1

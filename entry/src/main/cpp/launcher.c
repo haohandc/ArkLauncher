@@ -114,6 +114,30 @@
 #define GAME_JAR    BUNDLE_LIBS "/game/mindustry.so"
 
 /* [A]
+ * 我们的 Arc 修改，做成一个独立的 jar，排在 classpath 的【最前面】。
+ *
+ * 为什么不写进游戏 jar 了（2026-09-28 改）
+ *   以前靠 patch_mindustry.py 就地改写游戏 jar（把 arc/backend/sdl/** 整目录换掉）。
+ *   那样每次跟进上游都要重开、重写那个 jar，而且包一出来就分不清哪些类是我们的。
+ *   现在游戏 jar 就是上游原版、一个字节都不改，我们的类放这里。
+ *
+ * 为什么这个顺序就是全部
+ *   JVM 按 classpath 顺序解析类，先命中的赢。这个条目排在 GAME_JAR 前面，它里面的
+ *   26 个类因此压过游戏 jar 里的同名类。
+ *   ⚠️ 这个顺序【是承重的】—— 挪到后面，补丁就完全不起作用，而应用看起来只是
+ *   「行为不对」，不会报任何错。
+ *
+ * 已实测（设备，非推断）
+ *   · 桌面 JVM 三组实验、两组互为对照 ⇒ 顺序确实决定结果
+ *   · 设备：一个 arc/util/Log 替身排在最前 ⇒ 游戏加载的确实是替身（NoSuchFieldError）
+ *   · 完整组合：上游原版 jar + 这个 jar + bundle 原生库 ⇒ 游戏起来、音频正常
+ *   · 跨版本：同一份补丁 jar 同时驱动 160.4 与 160.5（后者实测 Version: 160.5）
+ *
+ * 由 make_patch_jar.py 产出，带三道闸门；verify_hap.py 第 6b 段在产物里再查一遍。
+ */
+#define PATCH_JAR   BUNDLE_LIBS "/patchjar/arcpatch.so"
+
+/* [A]
  * LWJGL，分两半 —— 它们因为两个不同的原因去了两个不同的地方。见 prep_lwjgl.py。
  *
  * 游戏 jar 里不含 LWJGL。Arc 的 SDL3 后端通过 org.lwjgl.opengl.* 和 org.lwjgl.sdl.* 调用
@@ -2287,13 +2311,45 @@ static int start_jvm(void)
     SDL_Log("   -> JNI_CreateJavaVM = %p", (void *)create);
 
     /* [A]
-     * class path 是游戏加 LWJGL。LWJGL 在这里不是可选项：游戏自己的后端类，没有 org.lwjgl.*
-     * 就无法链接，所以找不到它们会在加载 application 的时候暴露出来，而不是在加载游戏 main class
-     * 的时候。
+     * 补丁 jar 必须在，而且必须是个能打开的 jar。
+     *
+     * ⚠️ 为什么这值得【中止启动】而不是继续：少了它，游戏 jar 里那份上游 SDL2 后端就会
+     * 生效，而那个后端在本平台加载不了自己的 libSDL2 —— 失败长相与「补丁 jar 丢了」毫无
+     * 相似之处，排查会从完全错误的方向开始。这里失败，至少让人一眼看到真因。
+     *
+     * 半状态绝不接受：宁可不起，也不要起一个「少了我们一半改动」的应用。
+     */
+    {
+        struct stat st_patch;
+        if (stat(PATCH_JAR, &st_patch) != 0) {
+            SDL_Log(" !! the Arc patch jar is NOT SHIPPED: %s", PATCH_JAR);
+            SDL_Log("    the game jar alone would run upstream's SDL2 backend, which cannot");
+            SDL_Log("    load its own libSDL2 here -- refusing to start rather than fail vaguely.");
+            SDL_Log("    build it with: python scripts/make_patch_jar.py");
+            return 3;
+        }
+        FILE *f_patch = fopen(PATCH_JAR, "rb");
+        char magic[2] = { 0, 0 };
+        if (!f_patch || fread(magic, 1, 2, f_patch) != 2 || magic[0] != 'P' || magic[1] != 'K') {
+            if (f_patch) fclose(f_patch);
+            SDL_Log(" !! the Arc patch jar is not a readable jar: %s", PATCH_JAR);
+            SDL_Log("    (expected a ZIP: first two bytes 'PK')");
+            SDL_Log("    build it with: python scripts/make_patch_jar.py");
+            return 4;
+        }
+        fclose(f_patch);
+        SDL_Log("   patch jar: %s (%ld bytes) OK", PATCH_JAR, (long)st_patch.st_size);
+    }
+
+    /* [A]
+     * class path 是补丁 jar + 游戏 + LWJGL。LWJGL 在这里不是可选项：游戏自己的后端类，
+     * 没有 org.lwjgl.* 就无法链接，所以找不到它们会在加载 application 的时候暴露出来，
+     * 而不是在加载游戏 main class 的时候。
+     * ⚠️ 第一个条目是补丁 jar，顺序承重 —— 见 PATCH_JAR 的注释。
      */
     SDL_snprintf(opt_classpath, sizeof(opt_classpath),
-                 "-Djava.class.path=%s:%s/lwjgl.so:%s/lwjgl-opengl.so:%s/lwjgl-sdl.so:%s",
-                 GAME_JAR, LWJGL_JARS, LWJGL_JARS, LWJGL_JARS, HELPER_JAR);
+                 "-Djava.class.path=%s:%s:%s/lwjgl.so:%s/lwjgl-opengl.so:%s/lwjgl-sdl.so:%s",
+                 PATCH_JAR, GAME_JAR, LWJGL_JARS, LWJGL_JARS, LWJGL_JARS, HELPER_JAR);
     /* [A]
      * bundle 库目录放在【最前】，而这个顺序正是关键。
      *

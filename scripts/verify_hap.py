@@ -22,6 +22,7 @@ Checks
 
 ASCII-only output.
 """
+import io
 import os
 import re
 import subprocess
@@ -335,7 +336,10 @@ def main():
     # ==================================================================
     print("== 6. the game jar, hashed as packaged ==")
     import hashlib
-    WANT_GAME = "e25bc13837ccd476fd32fb274b5da90991c6fbad"
+    # ⭐ The UPSTREAM jar, unmodified -- so this is a statement about a file
+    # Anuken published, not about our own build output. See the note in
+    # prep_game.py. Changed 2026-09-28; it used to pin our multi-stage variant.
+    WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
     GAME_ENTRY = "libs/arm64-v8a/game/mindustry.so"
     game_ok = False
     with zipfile.ZipFile(hap) as z:
@@ -357,6 +361,63 @@ def main():
             print("   bytes : %d" % n)
             print("   expect: %s" % WANT_GAME)
             print("   actual: %s   %s" % (got_game, "OK" if game_ok else "MISMATCH"))
+    print()
+
+    # ==================================================================
+    # 6b. THE PATCH JAR.
+    #
+    # Under the architecture adopted 2026-09-28 our Arc classes are no longer
+    # written into the game jar; they ship in a separate jar that the launcher
+    # puts AHEAD of it on -Djava.class.path. That makes the game jar pristine
+    # (step 6 pins it) and puts our classes somewhere new -- which means the
+    # place they live needs a gate of its own, or a build that forgot to include
+    # them would be caught by nothing at all. The game would still start: it
+    # would simply run upstream's SDL2 backend, which cannot load its own
+    # libSDL2 here, and the failure would look like anything but a missing jar.
+    #
+    # Three things are checked, in order of how specific they are:
+    #   * the entry is present and is really a jar
+    #   * the classes that exist ONLY in our backend are in it
+    #   * so is a class carrying a change we made (a rename would keep the first
+    #     check passing while the patch did nothing)
+    # ==================================================================
+    print("== 6b. the Arc patch jar ==")
+    PATCH_ENTRY = "libs/arm64-v8a/patchjar/arcpatch.so"
+    # Only-in-our-backend. Their absence means the jar was built from a narrowed
+    # source set -- which is a mistake this project actually made, see
+    # build_arc_patch.py's note about SdlConfig.
+    PATCH_MUST_EXIST = [
+        "arc/backend/sdl/GLBootstrap.class",
+        "arc/backend/sdl/GLDiag.class",
+        "arc/backend/sdl/GLDispatchFix.class",
+    ]
+    # A class we changed, and a string only the changed version contains.
+    PATCH_MARKER = ("arc/graphics/gl/GLVersion.class", b"(Ljava/lang/CharSequence;)Z")
+    patch_ok = False
+    with zipfile.ZipFile(hap) as z:
+        if PATCH_ENTRY not in z.namelist():
+            print("   MISSING from the archive: %s" % PATCH_ENTRY)
+        else:
+            blob = z.read(PATCH_ENTRY)
+            print("   entry : %s" % PATCH_ENTRY)
+            print("   bytes : %d" % len(blob))
+            if blob[:2] != b"PK":
+                print("   NOT a jar -- first two bytes are %r, expected PK" % blob[:2])
+            else:
+                inner = zipfile.ZipFile(io.BytesIO(blob))
+                names = inner.namelist()
+                print("   classes in it: %d" % len(names))
+                missing = [n for n in PATCH_MUST_EXIST if n not in names]
+                cls, marker = PATCH_MARKER
+                if missing:
+                    print("   MISSING classes: %s" % ", ".join(missing))
+                elif cls not in names:
+                    print("   MISSING: %s" % cls)
+                elif marker not in inner.read(cls):
+                    print("   %s does not carry the change (%r)" % (cls, marker))
+                else:
+                    patch_ok = True
+                    print("   our classes are present and carry the change   OK")
     print()
 
     # ==================================================================
@@ -424,7 +485,12 @@ def main():
     # so the same source produces a different file every time. What matters is
     # that the class it is supposed to carry is inside the copy in the HAP.
     print("== 8. the launcher helper jar ==")
-    import io
+    # NOTE  `import io` was here until 2026-09-29 and had to go: Python decides a
+    # name is local for the WHOLE function if any import of it appears anywhere in
+    # that function, so this line made `io` a local of main() and the top-level
+    # import invisible -- section 6b, which runs first, died with
+    # "cannot access local variable 'io'". The import at the top of the file
+    # covers every use in here.
     helper_entry = "libs/arm64-v8a/launcher/helper.so"
     helper_class = "com/haohandc/launcher/NativeLoader.class"
     helper_ok = False
@@ -467,7 +533,7 @@ def main():
     print()
 
     ok = (got and has_create and not bad and got_shim in WANT_SHIM and dyn_ok
-          and game_ok and lwjgl_ok and helper_ok and ok_ref[0])
+          and game_ok and patch_ok and lwjgl_ok and helper_ok and ok_ref[0])
     print("RESULT: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 

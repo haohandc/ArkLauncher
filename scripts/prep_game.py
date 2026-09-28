@@ -40,16 +40,24 @@ import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
 
-# Where the pinned build comes from is configurable (ARK_GAME_JAR) so that a
-# different machine can point at its own copy without editing this script.
-SRC = config.GAME_JAR
+# ⭐ The UPSTREAM release jar, unmodified -- byte for byte what Anuken published.
+#
+# Changed 2026-09-28. This used to copy the audio-fixed variant, which was the
+# output of build_arc_patch.py -> patch_mindustry.py -> build_variants.py. Under
+# the current architecture none of that is written into the game jar: our Arc
+# changes ship as a separate jar ahead of it on the class path (make_patch_jar.py,
+# PATCH_JAR in launcher.c), and the Arc natives come from the bundle via
+# prep_arc.py. So what goes in the game slot is the pristine jar.
+#
+# The hash below therefore identifies an UPSTREAM artifact, which is a stronger
+# statement than it used to be: two SHA-1s and the file-name check all used to
+# point at our own multi-stage output, and a mistake anywhere in that chain
+# produced a different jar that only this constant could have noticed.
+SRC = config.UPSTREAM_JAR
 
-# The pinned variant: the audio-fixed build (SDL3/OHAudio backend, providerall GL
-# dispatch) PLUS the OpenGL ES profile request in Arc's SDL backend, which
-# OpenHarmony needs because it has no desktop GL at all. Built by
-# build_arc_patch.py -> patch_mindustry.py -> build_variants.py, each of which
-# refuses to run on a stale input.
-SRC_SHA1 = "e25bc13837ccd476fd32fb274b5da90991c6fbad"
+# Mindustry v8 Build 160.5, the official desktop release. Its version.properties
+# says build=160.5, modifier=release, type=official.
+SRC_SHA1 = "8e0fd5d7dd7828fccff59a693a635948883a704b"
 
 DEST = os.path.join(PROJECT_ROOT,
                     "entry", "libs", "arm64-v8a", "game", "mindustry.so")

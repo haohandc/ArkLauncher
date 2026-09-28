@@ -69,6 +69,37 @@ SRC_FILES = os.path.join(ARC, "backends", "backend-sdl3", "src",
 SRC_ROOT = os.path.join(ARC, "backends", "backend-sdl3", "src")
 CORE_ROOT = os.path.join(ARC, "arc-core", "src")
 
+
+def backend_sources():
+    """Every .java in the SDL3 backend, not just the three named above.
+
+    ⚠️ 2026-09-28. This is the fix for a failure that took a device build to
+    find: the patch has to be the WHOLE recompiled backend, not three files.
+
+    patch_mindustry.py replaces arc/backend/sdl/ as a DIRECTORY -- its own
+    comment says "目录替换（backend-sdl3 整体覆盖 backend-sdl）". So whatever is
+    in arcbuild/sdl3 goes in, and the game jar's copies of those names are
+    replaced whether or not we edited the matching source.
+
+    Ten of the backend's twelve sources are ours (seven modified, three new:
+    GLBootstrap, GLDiag, GLDispatchFix). Compiling only SdlApplication/SdlInput/
+    SdlFiles produced a patch jar missing SdlConfig and the GL classes, and the
+    device died with:
+
+        NoSuchFieldError: Class arc.backend.sdl.SdlConfig does not have member
+        field 'java.lang.String appName'
+
+    because our SdlApplication reads a field that only OUR SdlConfig declares.
+    The install filter below had narrowed to three prefixes while the directory
+    it feeds is consumed as a whole.
+    """
+    out = []
+    for dp, _d, fs in os.walk(SRC_ROOT):
+        for f in sorted(fs):
+            if f.endswith(".java"):
+                out.append(os.path.join(dp, f))
+    return sorted(out)
+
 # The LWJGL jars, needed on the compile class path because Arc's SDL3 backend
 # references org.lwjgl.* -- same directory prep_lwjgl.py ships from.
 LWJGL = config.LWJGL_SRC
@@ -305,11 +336,16 @@ def main():
                           os.path.join(ARCBUILD, "sdl3")] + jars)
 
     with tempfile.TemporaryDirectory() as tmp:
+        srcs = backend_sources()
+        if not srcs:
+            print("FAIL no .java under %s" % SRC_ROOT)
+            return 1
+        print("backend sources = %d" % len(srcs))
         cmd = [JAVAC, "--release", "17", "-nowarn", "-implicit:none",
                "-encoding", "UTF-8",
                "-cp", cp,
                "-sourcepath", os.pathsep.join([SRC_ROOT, CORE_ROOT]),
-               "-d", tmp, SRC, SRC_INPUT, SRC_FILES]
+               "-d", tmp] + srcs
         r = subprocess.run(cmd, capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         if r.returncode != 0:
@@ -344,17 +380,37 @@ def main():
             print("compiled: %s major=61, contains %s"
                   % (cls, ", ".join(repr(m.decode()) for m in markers)))
 
+        # Clear stale .class files first. patch_mindustry.py takes this directory
+        # WHOLE, so a class left behind by an earlier run -- or by a class we have
+        # since removed -- would be packed as if it were current.
         os.makedirs(OUT_SDL3, exist_ok=True)
-        installed = 0
+        removed = 0
+        for f in os.listdir(OUT_SDL3):
+            if f.endswith(".class"):
+                os.remove(os.path.join(OUT_SDL3, f))
+                removed += 1
+        if removed:
+            print("cleared %d stale class file(s) from %s" % (removed, OUT_SDL3))
+
+        compiled = {}
         for dp, _d, fs in os.walk(os.path.join(tmp, "arc", "backend", "sdl")):
             for f in fs:
-                if (f.startswith("SdlApplication") or f.startswith("SdlInput")
-                        or f.startswith("SdlFiles")):
-                    src_p = os.path.join(dp, f)
-                    dst_p = os.path.join(OUT_SDL3, f)
-                    shutil.copyfile(src_p, dst_p)
-                    installed += 1
-        print("installed %d class file(s) into %s" % (installed, OUT_SDL3))
+                if f.endswith(".class"):
+                    compiled[f] = os.path.join(dp, f)
+        for f, src_p in compiled.items():
+            shutil.copyfile(src_p, os.path.join(OUT_SDL3, f))
+        print("installed %d class file(s) into %s" % (len(compiled), OUT_SDL3))
+
+        # The directory is consumed as a whole by patch_mindustry.py, so what
+        # lands there has to be exactly what was compiled -- no leftovers, no
+        # silent drops. A count alone would not catch a swap.
+        landed = set(f for f in os.listdir(OUT_SDL3) if f.endswith(".class"))
+        if landed != set(compiled):
+            print("FAIL installed set != compiled set")
+            print("   extra: %s" % sorted(landed - set(compiled)))
+            print("   missing: %s" % sorted(set(compiled) - landed))
+            return 1
+        print("installed set == compiled set (%d files)" % len(landed))
 
     # Verify from the installed copy, not from the temporary one.
     for name in PRODUCES:
