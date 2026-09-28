@@ -544,9 +544,6 @@ struct Index {
   @State shieldBlocked: boolean = false;
   /* [B] Kit 的原始答案：'on' / 'off' / 'no-lib: ...' / 'no-sym: ...' / 'mode=N'。 */
   @State shieldDiag: string = '';
-  /* [A] 当刚才跑过的探测说内存【不】可用时为真。它就是那道闸门：没有它，硬着头皮
-   * 点过提示只会让进程再死一次，而且什么都不显示。 */
-  @State execProbeFailed: boolean = false;
   /* [B] 上一次启动的临终遗言，在它的日志还存在时捕获。 */
   @State jvmFaults: string = '';
   /** [B] 启动器留下了它那个「JVM 正在创建」的标记。 */
@@ -708,7 +705,6 @@ struct Index {
       this.shieldDiag = 'call-failed: ' + err.message;
     }
     this.shieldBlocked = (this.shieldDiag === 'on');
-    this.recheckExecMemory();
     hilog.info(DOMAIN, TAG, 'shield diagnosis: %{public}s -> blocked=%{public}s',
       this.shieldDiag, String(this.shieldBlocked));
 
@@ -1588,24 +1584,6 @@ struct Index {
    * 等价于一次条件写入，其实不是：一台手机第一次被更新到 API 26 以上时，那个 -Xint
    * 会留下来，游戏会永久以解释方式运行，而设备上没有任何东西能解释为什么。
    */
-  /* [A]
-   * 问一下可执行内存是否可用，并记住答案。
-   *
-   * 【失败即放行】，和坚盾检查一样：如果调用本身抛异常（模块没链接），那是我们认知上
-   * 的一个空白，不是设备受限的证据，而毫无证据就拒绝启动，正是这一整块代码存在的目的
-   * 所要防止的失败。
-   */
-  private recheckExecMemory(): void {
-    let ok = true;
-    try {
-      ok = shield.probeExecMemory();
-    } catch (e) {
-      ok = true;
-    }
-    this.execProbeFailed = !ok;
-    hilog.info(DOMAIN, TAG, 'exec-memory probe: available=%{public}s', String(ok));
-  }
-
   private setupCompatMode(): void {
     /* [A]
      * 这三者的顺序决定谁压过谁，它是：
@@ -1720,7 +1698,7 @@ struct Index {
     Stack({ alignContent: Alignment.Top }) {
     Row() {
       Column() {
-        if (!this.shieldBlocked && !this.execProbeFailed) {
+        if (!this.shieldBlocked) {
           XComponent({ id: 'SDL_XComponent', type: XComponentType.SURFACE, libraryname: 'SDL3' })
             .id('SDL_XComponent')
             /* [A]
@@ -2118,41 +2096,6 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .focusable(false)
         .onClick(() => { this.showAbout = false; })
-      }
-      /* [A]
-       * ⚠️ 顺序很重要 —— 这个块声明在坚盾提示【之前】，把它挪到后面会破坏坚盾那种
-       * 情况。
-       *
-       * 在 Stack 里，靠后的子节点画在上层，所以当两个提示同时为真时，它们中【最后】的
-       * 那个胜出。在一台处于坚盾模式的设备上两者都为真（坚盾模式是可执行内存丢失的
-       * 一种途径），而坚盾提示才是可操作的那一个：它指出了要关掉的设置。这一个只能说
-       * 「通常是暂时的，点一下重新检测」，而在坚盾模式开着时那是没用的建议 —— 点它
-       * 重新检测会一直失败，直到那个设置改变。
-       *
-       * 2026-09-28 实测，在这次移动之前：坚盾模式【开着】时设备显示的是【这个】提示，
-       * 而坚盾提示被完全遮住了。那比用户在这个闸门存在之前所掌握的信息【还少】。
-       *
-       * 按现在的顺序：
-       *   shield ON            -> 坚盾提示，它说明怎么关掉它
-       *   shield OFF, no memory -> 这个提示，它提供重新检测
-       */
-      if (this.execProbeFailed) {
-        Column() {
-          Column() {
-            Text('现在无法启动').fontSize(22).fontColor('#FFFFFF')
-            Text('系统当前不允许应用申请可执行内存，游戏所需的 Java 虚拟机无法创建。')
-              .fontSize(14).fontColor('#E0FFFFFF').margin({ top: 14 })
-            Text('这通常是暂时的。')
-              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
-            Text('点击任意位置重新检测')
-              .fontSize(13).fontColor('#A0FFFFFF').margin({ top: 10 })
-          }
-          .padding(20).backgroundColor('#F01C1C1C').borderRadius(14).width('90%')
-        }
-        .width('100%').height('100%').backgroundColor('#B0000000')
-        .justifyContent(FlexAlign.Center)
-        .focusable(false)
-        .onClick(() => { this.recheckExecMemory(); })
       }
       if (this.shieldBlocked) {
         Column() {

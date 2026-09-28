@@ -30,7 +30,6 @@
 #include <node_api.h>
 #include <stdio.h>
 #include <dlfcn.h>
-#include <sys/mman.h>
 #include <DeviceSecurityKit/device_security_mode.h>
 
 static napi_value ShieldDiagnosis(napi_env env, napi_callback_info info)
@@ -67,63 +66,11 @@ static napi_value ShieldDiagnosis(napi_env env, napi_callback_info info)
     return result;
 }
 
-/* [A]
- * 这个进程【现在】能不能拿到匿名可执行内存？
- *
- * 为什么这才是决定性问题，而「坚盾开不开」不是
- *   2026-09-28 实测：同一个包启动两次，两份日志逐行相同，唯一差别就在这个探测 ——
- *   探测为 42 时 JVM 建成、游戏跑起来了；探测为 -1 时 JNI_CreateJavaVM 从未返回，
- *   进程凭空消失，没有错误码、也没有 faultlog。坚盾模式只是「拿不到可执行内存」的
- *   【一种】成因，不是唯一一种 —— 实测坚盾【关着】的启动也出现过 -1。所以要问的
- *   是那个覆盖全部成因的问题，而不是只覆盖一种成因的那个。
- *
- * 为什么不干脆「去问 launcher」
- *   launcher 自己的探测跑在 main() 里，而 main() 只有在 XComponent 存在之后才会跑 ——
- *   可 XComponent 建不建，正是这里要决定的事。到那时进程已经无可挽回了。这个问题
- *   必须在那之前就能回答。
- *
- * 为什么用了 munmap，而 launcher 的探测没有
- *   launcher.c 的 probe_exec_mem() 是故意不释放映射、且每次都打日志的，所以它
- *   绝不能放进循环里调用。这一个会在每次启动、每次按「重试」时都调用，所以它
- *   映射、然后释放。
- *
- * ⚠️ 为什么【不】把机器码写进去再执行它（第一版是这样，已改掉）
- *   第一版往那块内存里写了一条 AArch64 指令「mov w0,#42; ret」并调用它，只在
- *   返回 42 时才判为可用。那一步不带来任何额外覆盖，却引入一个真实的崩溃风险：
- *   本探针跑在 aboutToAppear，此时 launcher.c 的信号处理器【还没装上】（那是
- *   main() 里的事，而 main() 这时根本还没跑）。mmap 成功但执行出错的话，这个
- *   探针会自己把应用打死，连提示都来不及显示 —— 正是它要防的那件事。
- *
- *   额外的覆盖确实是零：本项目实测过，拿不到时 mmap(RWX) 直接失败（errno=22），
- *   所以 mmap 这一步就是完整信号。（见 FACT.md 的「匿名可执行内存的内核边界」。）
- *
- * ⭐ 这个写法与 AMCL 的 detectJitSupport() 一致（amcl-src：jvm/jvm_launcher.cpp）。
- *   它同样是「只 mmap、就 munmap」，不执行；而它的执行型探测留在 jvmInit 那条
- *   兜底上 —— 与本项目把执行型探测留在 launcher.c 里的结构相同。
- *   前置闸门用不会崩的那种，执行型探测放在它该在的位置。
- */
-static napi_value ProbeExecMemory(napi_env env, napi_callback_info info)
-{
-    bool ok = false;
-
-    void *p = mmap(NULL, 4096,
-                   PROT_READ | PROT_WRITE | PROT_EXEC,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (p != MAP_FAILED) {
-        ok = true;
-        munmap(p, 4096);
-    }
-
-    napi_value result;
-    napi_get_boolean(env, ok, &result);
-    return result;
-}
 
 static napi_value Init(napi_env env, napi_value exports)
 {
     napi_property_descriptor desc[] = {
         { "shieldDiagnosis", NULL, ShieldDiagnosis, NULL, NULL, NULL, napi_default, NULL },
-        { "probeExecMemory", NULL, ProbeExecMemory, NULL, NULL, NULL, napi_default, NULL },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
     return exports;
