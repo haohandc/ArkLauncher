@@ -1,54 +1,45 @@
-/*
- * Get a crash report out of the sandbox, to somewhere the player can send it.
+/* [A]
+ * 把崩溃报告从沙箱里弄出来，送到玩家能把它发出去的地方。
  *
- * THE PROBLEM THIS SOLVES
- *   The native side already writes a good crash dump. launcher.c's
- *   on_fatal_signal() catches SIGSEGV/SIGABRT/SIGBUS/SIGILL/SIGFPE and records
- *   the signal, the fault address, the thread name, the mapping, the PC, the
- *   registers and the instruction, plus the raw code words in cc_dump.bin.
+ * 它解决的问题
+ *   native 侧已经会写一份很好的崩溃转储。launcher.c 的 on_fatal_signal() 捕获
+ *   SIGSEGV/SIGABRT/SIGBUS/SIGILL/SIGFPE，并记录信号、故障地址、线程名、映射、PC、
+ *   寄存器和指令，外加 cc_dump.bin 里的原始代码字。
  *
- *   What is missing is not the dump, it is a way to get it OFF the device. On a
- *   release-signed install nothing outside the app can read the sandbox: hdc
- *   cannot, pidof cannot, the fault logger cannot -- all measured. So today a
- *   store user reporting "it crashes on launch" is a report with no evidence
- *   behind it, and that is the support case this exists for.
+ *   缺的不是那份转储，而是一个把它弄【出】设备的方法。在发布签名的安装上，
+ *   应用之外没有任何东西能读沙箱：hdc 不能、pidof 不能、故障日志器也不能 —— 全都实测过。
+ *   所以今天一个应用商店用户报告「它一启动就崩」时，就是一份背后没有任何证据的报告，
+ *   而这正是这个功能所针对的那类支持工单。
  *
- * TWO STEPS, BECAUSE TWO OPPOSITE CLOCKS ARE INVOLVED
- *   Step 1 must run as EARLY as possible. Step 2 must run as LATE as possible.
+ * 两步，因为牵涉到两个方向相反的时钟
+ *   第 1 步必须【尽量早】跑。第 2 步必须【尽量晚】跑。
  *
- *   Step 1 -- stashIfAny(), from EntryAbility.onCreate.
- *     launcher.c unlinks crash.txt every time main() is entered, deliberately:
- *     the file is written with O_APPEND so a fatal signal -- which can strike
- *     before stdout is usable -- never loses its report, which also means it
- *     would otherwise accumulate several launches into one confusing report.
+ *   第 1 步 —— stashIfAny()，来自 EntryAbility.onCreate。
+ *     launcher.c 每次进入 main() 都会 unlink crash.txt，这是故意的：
+ *     该文件以 O_APPEND 写入，这样一个致命信号 —— 它可能在 stdout 可用之前就打过来 ——
+ *     永远不会丢掉自己的报告；这同时也意味着它本来会把好几次启动累积成一份令人困惑的报告。
  *
- *     ArkTS onCreate runs BEFORE native main() (the ordering is visible in
- *     EntryAbility: provideArkTSObjects() is the handover, and main() is what
- *     it starts). So onCreate is the only window in which the previous launch's
- *     crash is still on disk. Read it there, or lose it.
- *     See the timeline comment at the call site.
+ *     ArkTS 的 onCreate 在 native main() 【之前】跑（这个顺序在 EntryAbility 里是看得见的：
+ *     provideArkTSObjects() 是交接点，而 main() 正是由它启动的）。所以 onCreate 是唯一
+ *     一个「上一次启动的崩溃仍在磁盘上」的窗口。在那里读它，否则就丢掉它。
+ *     见调用点的时序注释。
  *
- *   Step 2 -- publish(), from the page, once the Download folder is known-good.
- *     Writing to Download/<bundle>/ is NOT a plain mkdir on every device.
- *     ModImporter.ets measured both routes and neither works alone: the platform
- *     Download directory works on the tablet and throws on the phone, while the
- *     DOWNLOAD-mode picker is the reverse and also needs a window. So the folder
- *     is only trustworthy after ensureModFolder() has succeeded on the page --
- *     which is exactly where Index.ets already rewrites the user-dirs bridge,
- *     so this rides along with that.
+ *   第 2 步 —— publish()，来自页面，在 Download 文件夹确认可用之后。
+ *     往 Download/<bundle>/ 里写并不是在每台设备上都等于一次普通的 mkdir。
+ *     ModImporter.ets 把两条路线都测了，而单独任何一条都不行：平台 Download 目录
+ *     在平板上可用、在手机上抛异常，而 DOWNLOAD 模式选择器正好相反，而且还需要一个窗口。
+ *     所以只有在页面上的 ensureModFolder() 成功之后，这个文件夹才可信 ——
+ *     而那正是 Index.ets 已经在重写 user-dirs 桥接的地方，于是这件事就顺带搭了车。
  *
- * WHY THE STASH GOES IN ctx.filesDir
- *   That is the HAP-level directory: it always exists and is always writable,
- *   with no grant involved. Note it is NOT /data/storage/el2/base/files -- that
- *   one is the native side's application-level directory. The two are different
- *   directories and using the wrong one fails silently; the IME bridge in
- *   Index.ets carries the same warning for the same reason.
+ * 为什么暂存放到 ctx.filesDir
+ *   那是 HAP 级的目录：它始终存在、始终可写，不牵涉任何授权。注意它【不是】
+ *   /data/storage/el2/base/files —— 那个是 native 侧的应用级目录。这是两个不同的目录，
+ *   用错会静默失败；Index.ets 里的 IME 桥接出于同样的理由带着同样的警告。
  *
- * IDEMPOTENT, ON PURPOSE
- *   The published file is named after the crash, not after the launch, and an
- *   existing file of that name is left alone. So an app that crashes on every
- *   start produces ONE report, not one per attempt -- and two different crashes
- *   still produce two. Nothing here deletes anything.
+ * 幂等，这是有意为之
+ *   发布出来的文件是按崩溃命名的，不是按启动命名的，而同名的已存在文件会被放着不动。
+ *   所以一个每次启动都崩的应用只会产出一份报告，而不是每次尝试一份 —— 而两次不同的崩溃
+ *   仍然会产出两份。这里没有任何东西会删除任何东西。
  */
 import { bundleManager } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -58,20 +49,20 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 const DOMAIN = 0x0000;
 const TAG = 'MindustryLauncher';
 
-/*
- * The native side's application-level directory. Written as a literal because
- * context.filesDir is a DIFFERENT directory -- see the note above.
+/* [A]
+ * native 侧的应用级目录。之所以写成字面量，是因为 context.filesDir 是一个【不同的】目录
+ * —— 见上面的说明。
  */
 const NATIVE_FILES: string = '/data/storage/el2/base/files';
 const NATIVE_CRASH: string = NATIVE_FILES + '/crash.txt';
 
-/* Where the crash is parked between step 1 and step 2, relative to filesDir. */
+/* [B] 在第 1 步和第 2 步之间停放崩溃的地方，相对于 filesDir。 */
 const STASH_FILE: string = '/last-crash.txt';
 
-/* First line of the stash, so step 2 can tell a real stash from junk. */
+/* [B] 暂存文件的首行，这样第 2 步就能把真正的暂存和垃圾区分开。 */
 const STASH_MARKER: string = '#mindustryark-crash';
 
-/* Subfolder of the app's Download folder, so this does not clutter the mod list. */
+/* [B] 应用 Download 文件夹的子文件夹，这样它就不会把 mod 列表弄乱。 */
 const OUT_SUBDIR: string = '/diagnostics';
 
 function writeAll(path: string, text: string): void {
@@ -81,16 +72,15 @@ function writeAll(path: string, text: string): void {
   fs.closeSync(f);
 }
 
-/** One line of environment, or a visible reason why it is missing. */
+/** [B] 一行环境信息，或者一个可见的、说明它为什么缺失的理由。 */
 function envLines(): Array<string> {
   const lines: Array<string> = [];
   try {
     const info: bundleManager.BundleInfo =
       bundleManager.getBundleInfoForSelfSync(bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
-    /*
-     * Read at runtime rather than written down: a report that names the wrong
-     * version is worse than one that names none, and a hand-copied constant is
-     * exactly how that happens.
+    /* [A]
+     * 运行时读取，而不是写死：一份写错版本号的报告比一份不写版本号的报告更糟，
+     * 而手抄的常量正是这件事发生的方式。
      */
     lines.push('app          : ' + info.versionName + ' (' + info.versionCode + ')');
     lines.push('bundle       : ' + info.name);
@@ -108,19 +98,18 @@ function envLines(): Array<string> {
   return lines;
 }
 
-/**
- * Step 1 -- read the previous launch's crash out of the sandbox before native
- * main() deletes it. Safe to call on every launch; it does nothing when there
- * was no crash, which is the normal case.
+/** [A]
+ * 第 1 步 —— 在 native main() 把它删掉之前，把上一次启动的崩溃从沙箱里读出来。
+ * 每次启动调用它都是安全的；没有崩溃时它什么都不做，而这是常态。
  *
- * MUST BE CALLED FROM onCreate, BEFORE provideArkTSObjects(). See the file
- * header for why that ordering is not a detail.
+ * 必须从 onCreate、在 provideArkTSObjects() 【之前】调用。关于这个顺序为什么
+ * 不是一个细节，见文件头。
  */
 export function stashIfAny(filesDir: string): void {
   try {
-    /* accessSync RETURNS a boolean; it does not throw when the file is absent.
-     * Treating "no exception" as "it exists" has caused a real defect in this
-     * codebase before (see EntryAbility.startExitWatch). */
+    /* [A] accessSync 【返回一个布尔值】；文件不在时它不抛异常。
+     * 把「没有异常」当成「它存在」在这个代码库里以前造成过一个真实缺陷
+     * （见 EntryAbility.startExitWatch）。 */
     if (!fs.accessSync(NATIVE_CRASH)) {
       return;
     }
@@ -129,16 +118,16 @@ export function stashIfAny(filesDir: string): void {
       return;
     }
 
-    /*
-     * Prefer the crash file's own mtime: it says when the crash was WRITTEN,
-     * which is what "crashed at" should mean. Date.now() would only say when
-     * the next launch happened to notice it. Fall back if stat fails.
+    /* [A]
+     * 优先用崩溃文件自己的 mtime：它说的是崩溃是【何时被写入】的，
+     * 而这才是「crashed at」应该有的含义。Date.now() 只会说下一次启动碰巧注意到它是什么时候。
+     * stat 失败时就回退。
      */
     let crashedAt: number = Date.now();
     try {
       crashedAt = fs.statSync(NATIVE_CRASH).mtime;
     } catch (e) {
-      /* keep the fallback */
+      /* [B] 保留回退 */
     }
 
     writeAll(filesDir + STASH_FILE,
@@ -156,14 +145,13 @@ export function stashIfAny(filesDir: string): void {
   }
 }
 
-/**
- * How much of a log file to keep. The logs are rewritten from scratch on every
- * launch (the launcher opens them O_TRUNC), so this bounds a single session's
- * tail -- large enough to contain a boot, small enough to attach to a message.
+/** [A]
+ * 一个日志文件保留多少。这些日志每次启动都会被从头改写（launcher 以 O_TRUNC 打开它们），
+ * 所以这限定的是一次会话的尾部 —— 大到足以容纳一次启动，小到足以附在一条消息里。
  */
 const LOG_TAIL_BYTES = 128 * 1024;
 
-/** The tail of a file, or a visible reason why there is none. */
+/** [B] 一个文件的尾部，或者一个可见的、说明为什么没有的理由。 */
 function readTail(path: string, limit: number): string {
   try {
     if (!fs.accessSync(path)) {
@@ -176,9 +164,9 @@ function readTail(path: string, limit: number): string {
     if (size <= limit) {
       return fs.readTextSync(path);
     }
-    /*
-     * Read only the tail. fs.readTextSync takes offset/length, so a multi-megabyte
-     * log does not have to be pulled into a string just to be thrown away.
+    /* [A]
+     * 只读尾部。fs.readTextSync 接受 offset/length，所以一个几兆字节的日志
+     * 不必为了被丢掉而先整个拉进一个字符串里。
      */
     return '... [truncated: last ' + limit + ' of ' + size + ' bytes] ...\n' +
            fs.readTextSync(path, { offset: size - limit, length: limit });
@@ -188,24 +176,22 @@ function readTail(path: string, limit: number): string {
   }
 }
 
-/**
- * The support bundle: everything we would ask a user for, written on demand.
+/** [A]
+ * 支持包：我们会向用户索要的一切，按需写出。
  *
- * WHY THIS EXISTS SEPARATELY FROM THE AUTOMATIC PATH
- *   The automatic export above fires only when there IS a crash report. But the
- *   case that is hardest to act on has no crash at all -- "it will not start",
- *   "it behaves oddly" -- and on a release-signed install we cannot read
- *   stderr.log or stdout.log from outside either. So this packs the current
- *   session's logs plus any crash, and needs no crash to be useful.
+ * 为什么它在自动路径之外单独存在
+ *   上面的自动导出只在【确实有】崩溃报告时才触发。但最难处理的情形恰恰是根本没有崩溃的
+ *   那种 —— 「它起不来」、「它行为怪异」—— 而在发布签名的安装上，我们也无法从外部读
+ *   stderr.log 或 stdout.log。所以这个把当前会话的日志外加任何崩溃打包起来，
+ *   而且不需要有崩溃就有用。
  *
- * ⚠️ The logs belong to the CURRENT session, because the launcher truncates them
- *    at every start. That is the right thing for "it is misbehaving right now",
- *    which is when someone reaches for this.
+ * ⚠️ 这些日志属于【当前】会话，因为 launcher 每次启动都会截断它们。对于「它此刻正在闹别扭」
+ *    来说这是对的，而那正是有人伸手去拿这个功能的时候。
  *
- * Unlike the automatic path this is NOT idempotent: a deliberate press should
- * produce a file each time, so its name carries the moment of the press.
+ * 与自动路径不同，它【不是】幂等的：一次刻意的按下应该每次都产出一个文件，
+ * 所以它的名字里带着按下的那一刻。
  *
- * Returns the path written, or '' if nothing could be written.
+ * 返回写入的路径；如果一个字都写不出来，就返回 ''。
  */
 export function exportNow(modFolder: string, filesDir: string): string {
   try {
@@ -218,7 +204,7 @@ export function exportNow(modFolder: string, filesDir: string): string {
     try {
       fs.mkdirSync(dir, true);
     } catch (e) {
-      /* already there -- the write below is the real test */
+      /* [B] 已经在那儿了 —— 下面那次写入才是真正的测试 */
     }
 
     const stashPath: string = filesDir + STASH_FILE;
@@ -259,7 +245,7 @@ export function exportNow(modFolder: string, filesDir: string): string {
   }
 }
 
-/** Lift #crashed-at back out of a stash. Returns 0 when it is not there. */
+/** [B] 从暂存里把 #crashed-at 提回来。它不在时就返回 0。 */
 function readCrashedAt(stash: string): number {
   const lines: Array<string> = stash.split('\n');
   if (lines.length < 2 || lines[0].trim() !== STASH_MARKER) {
@@ -273,39 +259,38 @@ function readCrashedAt(stash: string): number {
   return Number.isNaN(value) ? 0 : value;
 }
 
-/**
- * Step 2 -- copy the stash into the player-visible Download folder.
+/** [A]
+ * 第 2 步 —— 把暂存复制进玩家可见的 Download 文件夹。
  *
- * modFolder is the app's folder in Downloads as a PATH (modFolderPath() returns
- * one; a URI is not usable here). Call it from the page, after ensureModFolder()
- * has resolved -- see the file header.
+ * modFolder 是应用在 Downloads 里的文件夹，形式为【路径】（modFolderPath() 返回的就是路径；
+ * URI 在这里不可用）。在 ensureModFolder() 完成之后，从页面上调用它 —— 见文件头。
  */
 export function publish(modFolder: string, filesDir: string): void {
   try {
     if (modFolder === '') {
-      return;  // the folder is not known yet; the next launch will try again
+      return;  // [B] 文件夹还不知道在哪儿；下次启动会再试
     }
     const stashPath: string = filesDir + STASH_FILE;
     if (!fs.accessSync(stashPath)) {
-      return;  // no crash to report, which is the normal case
+      return;  // [B] 没有崩溃要报告，而这是常态
     }
     const stash: string = fs.readTextSync(stashPath);
     const crashedAt: number = readCrashedAt(stash);
     if (crashedAt === 0) {
-      return;  // not something we wrote
+      return;  // [B] 不是我们写的东西
     }
 
     const dir: string = modFolder + OUT_SUBDIR;
     try {
-      fs.mkdirSync(dir, true);   // recursive; EEXIST is the normal case
+      fs.mkdirSync(dir, true);   // [B] 递归；EEXIST 是常态
     } catch (e) {
-      /* already there, or created concurrently -- the write below is the real test */
+      /* [B] 已经在那儿了，或者是并发创建的 —— 下面那次写入才是真正的测试 */
     }
 
     const target: string = dir + '/crash-' + crashedAt + '.txt';
     if (fs.accessSync(target)) {
-      /* This exact crash is already published. Doing nothing here is what keeps
-       * a crash-on-every-launch from filling the folder with copies. */
+      /* [A] 这一次崩溃已经发布过了。这里什么都不做，正是让「每次启动都崩」
+       * 不至于用一堆副本把这个文件夹塞满的原因。 */
       return;
     }
 

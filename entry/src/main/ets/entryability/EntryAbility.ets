@@ -12,20 +12,19 @@ import sdl from 'libSDL3.so';
 
 const DOMAIN = 0x0000;
 
-/**
- * Write JVM options passed on the command line into a file the native side reads.
+/** [A]
+ * 把命令行上传进来的 JVM 选项写进一个 native 侧会读的文件。
  *
- * WHY THIS EXISTS
- *   Trying one JVM flag used to cost a rebuild, a re-sign, a 171 MB reinstall and
- *   a relaunch -- minutes per guess. Nothing on the host can write into the app's
- *   sandbox directly: hdc can READ /data/app/el2/.../files but not write it, the
- *   app cannot read /data/local/tmp, and the Download directory is off limits to
- *   both. So the only way in is through the app itself, via launch parameters:
+ * 为什么需要它
+ *   过去试一个 JVM flag 的代价是：重新构建、重新签名、重装 171 MB、再启动一次 ——
+ *   每猜一次就是好几分钟。主机上没有任何东西能直接写进应用的沙箱：hdc 能【读】
+ *   /data/app/el2/.../files 但不能写它，应用读不到 /data/local/tmp，
+ *   而 Download 目录对两边都是禁区。所以唯一的入口是应用自己，通过启动参数：
  *
  *     hdc shell aa start -a EntryAbility -b com.haohandc.mindustryark \
  *         --ps jvmopt1 -Xint --ps jvmopt2 -XX:TieredStopAtLevel=1
  *
- *   Keys must start with "jvmopt" so ordinary launch parameters are ignored.
+ *   键必须以 "jvmopt" 开头，这样普通的启动参数才会被忽略。
  */
 function writeJvmOptions(want: Want, filesDir: string): void {
   try {
@@ -40,9 +39,8 @@ function writeJvmOptions(want: Want, filesDir: string): void {
       }
       const value = params[key];
       if (typeof value === 'string' && value.length > 0) {
-        // 'aa start' rejects a --ps value that begins with '-', so the dash is
-        // added here rather than supplied on the command line. Callers pass the
-        // option without it:  --ps jvmopt1 Xint   ->   -Xint
+        // [A] 'aa start' 会拒绝以 '-' 开头的 --ps 值，所以这个短横是在这里加上的，
+        // 而不是由命令行提供。调用方传进来的选项不带它：  --ps jvmopt1 Xint   ->   -Xint
         lines.push('-' + value);
       }
     }
@@ -61,39 +59,36 @@ function writeJvmOptions(want: Want, filesDir: string): void {
   }
 }
 
-/**
- * Record the platform's idea of the user-visible directories, for the native
- * side to probe.
+/** [C]
+ * 把平台认为的「用户可见目录」记录下来，供 native 侧探测。
  *
- * WHY
- *   The game's built-in file browser (mindustry/ui/FileChooser, used by "import
- *   save" and "import mod"; it is rooted at Arc's external storage path, which
- *   is why these directories are collected at all). NOTE: the reason that
- *   browser cannot work here is Arc's libarc-filedialogsarm64.so being a
- *   glibc desktop library -- NOT this platform's picker, which works fine.
- *   See mods/ModImporter.ets, which uses it.
- *   save") roots itself at Arc's external storage path, which SdlFiles computes
- *   as user.home + separator -- and this launcher points user.home at its own
- *   sandbox. So the browser opens inside the app, where the player cannot put
- *   anything. To fix that we need a directory that is BOTH user-writable and
- *   readable by the app, and the authority on where that is is this API, not a
- *   guess about path layouts.
+ * 为什么
+ *   游戏内置的文件浏览器（mindustry/ui/FileChooser，「import
+ *   save」和「import mod」用的就是它；它以 Arc 的外部存储路径为根，
+ *   这也正是为什么要收集这些目录）。注意：那个
+ *   浏览器在这里无法工作，原因是 Arc 的 libarc-filedialogsarm64.so 是一个
+ *   glibc 桌面库 —— 【不是】本平台的选择器，后者工作正常。
+ *   见 mods/ModImporter.ets，它用了它。
+ *   save") 以 Arc 的外部存储路径为根，SdlFiles 把它算作
+ *   user.home + separator —— 而本 launcher 把 user.home 指向它自己的
+ *   沙箱。所以浏览器会在应用内部打开，玩家在那儿
+ *   什么都放不进去。要修好这一点，我们需要一个【既】用户可写、
+ *   又被应用可读的目录，而关于这个目录在哪里的权威是这套 API，
+ *   而不是对路径布局的猜测。
  *
- *   ArkTS is the only side that can ask; native is the only side that can test
- *   readability with the same libc the game uses. So ArkTS writes them down and
- *   native reads them back. A wrong guess would cost a build and a 171 MB
- *   install, so this is deliberately two-sided rather than assumed.
+ *   只有 ArkTS 这一侧能去问；只有 native 这一侧能用游戏所用的同一个 libc
+ *   去测可读性。所以 ArkTS 把它们写下来，native 再读回去。猜错一次的代价是
+ *   一次构建加一次 171 MB 的安装，所以这里刻意做成双侧，而不是靠假设。
  *
- * ⚠️ CALLED TWICE PER LAUNCH, AND THAT IS THE FIX FOR A REAL DEFECT.
- *   Here in onCreate, and again from the page once ensureModFolder has made the
- *   folder. The reason is ordering: this runs before the page, so on the first
- *   launch after an install the folder does not exist yet and the `mods=` line
- *   cannot be written -- which sent the game's file browser to a directory this
- *   app cannot read. Re-writing once the folder is known repairs that launch
- *   whenever the write beats the launcher's read (the launcher reads it when
- *   SDL_main starts, which is when the XComponent mounts -- later than
- *   aboutToAppear), and is harmless when it does not.
- *   Exported for exactly that second call; see Index.ets.
+ * ⚠️ 每次启动调用【两次】，而这是对一个真实缺陷的修复。
+ *   一次在这里的 onCreate，一次在 ensureModFolder 建好
+ *   文件夹之后由页面再调。原因是顺序：这段在页面之前跑，所以在安装后的第一次
+ *   启动时文件夹还不存在，`mods=` 那一行
+ *   写不出来 —— 这会把游戏的文件浏览器送去一个本应用读不了的目录。
+ *   在文件夹已知之后再写一次，只要写发生在 launcher 读之前就能修复那次启动
+ *   （launcher 在 SDL_main 启动时读它，也就是 XComponent 挂载的时候 —— 比
+ *   aboutToAppear 晚），而如果没赶上也无害。
+ *   正是为了这第二次调用才导出；见 Index.ets。
  */
 export function writeUserDirs(filesDir: string): void {
   const lines: string[] = [];
@@ -112,17 +107,16 @@ export function writeUserDirs(filesDir: string): void {
   } catch (e) {
     lines.push('filesdir=<threw>');
   }
-  /*
-   * The app's own folder in Downloads, if the player has created it.
+  /* [A]
+   * 应用在 Downloads 里自己的文件夹，前提是玩家已经创建了它。
    *
-   * The launcher points the game's file browser at this, so that "import mod"
-   * opens where the player's mod files actually are. Without it the browser
-   * falls back to the sandbox -- which is a usable browser, but not one that
-   * can see anything the player put in Downloads.
+   * launcher 把游戏的文件浏览器指向它，好让「导入模组」在玩家的 mod 文件
+   * 真正所在的地方打开。没有它，浏览器就退回沙箱 —— 那是个能用的浏览器，
+   * 但看不见玩家放进 Downloads 的任何东西。
    *
-   * Written as a resolved PATH, not the URI: the native side has no way to
-   * resolve a file:// URI, and this bridge is a plain text file. The grant
-   * itself is held by the process, so the path is enough for our own code.
+   * 写成解析后的【路径】，不是 URI：native 侧没有办法解析 file:// URI，
+   * 而这个桥接只是一个纯文本文件。授权本身由进程持有，
+   * 所以对我们自己的代码来说路径就够了。
    */
   try {
     const where: string = modFolderPath(filesDir + '/mod_folder');
@@ -148,33 +142,28 @@ export function writeUserDirs(filesDir: string): void {
 }
 
 export default class EntryAbility extends UIAbility {
-  /**
-   * Watch for the native side finishing, then close the ability properly.
+  /** [A]
+   * 盯着 native 侧结束，然后体面地把 ability 关掉。
    *
-   * WHY THE ABILITY HAS TO BE THE ONE TO END IT
-   *   The launcher used to kill its own process once the game's main() returned.
-   *   From the framework's side that is a native process dying while its ability
-   *   is still running, which the system records as "Cpp Crash" -- with no signal
-   *   and no crash dump, which is how we know it is a classification of an
-   *   abnormal-looking exit rather than a real fault.
+   * 为什么必须由 ability 来结束它
+   *   launcher 过去在游戏的 main() 返回后就杀掉自己的进程。从框架的角度看，
+   *   那是一个 native 进程在它的 ability 还在运行时就死掉了，系统会把它记成
+   *   「Cpp Crash」—— 没有信号、没有崩溃转储，正因如此我们才知道它是对一次
+   *   看起来不正常的退出所做的归类，而不是一个真实的故障。
    *
-   *   Ending normally means the ABILITY is destroyed first and the framework
-   *   takes the process down afterwards. Native code has no way to do that: the
-   *   ability object is an ArkTS object. So the native side drops a marker file
-   *   and this polls for it -- polling rather than a callback because the two
-   *   sides already share a filesystem and nothing else, and because a callback
-   *   would need a native->ArkTS call on a non-JS thread.
+   *   正常结束意味着先销毁【ability】，框架随后再把进程带下去。native 代码没法做到这点：
+   *   ability 对象是一个 ArkTS 对象。所以 native 侧丢下一个标记文件，由这边轮询它 ——
+   *   轮询而不是回调，因为两侧已经共享了文件系统、且只共享这个，也因为回调会需要在
+   *   非 JS 线程上做一次 native->ArkTS 调用。
    *
-   * TWO PATHS, BOTH CHECKED
-   *   Native writes under /data/storage/el2/base/files; context.filesDir is the
-   *   module-scoped /data/storage/el2/base/haps/entry/files. Those are different
-   *   directories, and rather than guess which one both sides can reach, the
-   *   marker is written to both and both are checked here. The launcher already
-   *   reads jvm.options from two locations for the same reason.
+   * 两条路径，都检查
+   *   native 写在 /data/storage/el2/base/files 下；context.filesDir 是模块作用域的
+   *   /data/storage/el2/base/haps/entry/files。这是两个不同的目录，与其去猜哪一个
+   *   两侧都够得着，不如把标记同时写到两处，这里两处都查。launcher 出于同样的理由，
+   *   已经在从两个位置读 jvm.options 了。
    *
-   *   A marker left over from a previous run would close the app a quarter
-   *   second after launch, so the native side unlinks both at startup. Do not
-   *   remove that unlink.
+   *   上一次运行遗留的标记会在启动四分之一秒后把应用关掉，所以 native 侧在启动时
+   *   把两个都 unlink 掉。不要移除那个 unlink。
    */
   private startExitWatch(ctx: common.UIAbilityContext): void {
     const markers: string[] = [
@@ -183,19 +172,18 @@ export default class EntryAbility extends UIAbility {
     ];
     let ticks = 0;
 
-    // Clear anything left over from a previous session BEFORE watching.
+    // [A] 在开始监视【之前】，先清掉上一次会话遗留的任何东西。
     //
-    // The native side unlinks these too, but it does so later than we get here
-    // (its main() runs after onCreate), and until it does, a stale marker is
-    // indistinguishable from a fresh one -- which means an app that was
-    // force-stopped mid-exit would shut itself down on the next launch. So the
-    // watcher clears its own trigger first.
+    // native 侧也会把这些 unlink 掉，但它动手比我们到这里更晚
+    // （它的 main() 在 onCreate 之后才跑），而在它动手之前，一个陈旧的标记
+    // 和一个新鲜的标记是分不出来的 —— 这意味着一个在退出中途被强停的应用
+    // 会在下一次启动时把自己关掉。所以监视者先清掉自己的触发器。
     for (const path of markers) {
       try {
         fs.unlinkSync(path);
       } catch (e) {
-        // unlinkSync throws when there is nothing to delete, which is the
-        // normal case. Nothing to do either way.
+        // [B] 没有东西可删时 unlinkSync 会抛异常，而这是常态。
+        // 无论哪种情况都无需做什么。
       }
     }
 
@@ -203,15 +191,13 @@ export default class EntryAbility extends UIAbility {
       ticks++;
       for (const path of markers) {
         try {
-          // THE RETURN VALUE IS THE ANSWER. accessSync does NOT throw when the
-          // file is absent -- it returns false. An earlier revision of this
-          // called it and treated "no exception" as "the marker exists", which
-          // made the app shut itself down on the very first tick, within a
-          // quarter second of launch, every time. The hilog line said "native
-          // exit marker seen" while ls showed no such file, which is what
-          // finally settled it.
+          // [A] 【返回值才是答案】。文件不在时 accessSync 【不】抛异常 —— 它返回 false。
+          // 这段代码更早的一个修订版调用了它，并把「没有异常」当成「标记存在」，
+          // 结果让应用在第一个 tick 上、也就是启动四分之一秒之内，每次都把自己关掉。
+          // hilog 那行说 "native exit marker seen"，而 ls 显示根本没有这个文件，
+          // 这才最终把这件事定了下来。
           if (!fs.accessSync(path)) {
-            continue;  // not there yet -- the normal case until the game closes
+            continue;  // [B] 还没到 —— 在游戏关闭之前，这都是常态
           }
           hilog.info(DOMAIN, 'SDL/STARTUP',
                      'native exit marker seen (%{public}s) -- terminating ability', path);
@@ -222,13 +208,13 @@ export default class EntryAbility extends UIAbility {
           });
           return;
         } catch (e) {
-          // A genuine error (bad path, no permission) -- treat as "not there"
-          // and keep polling; the native side still exits on its own timeout.
+          // [B] 一个真实的错误（路径不对、没权限）—— 当成「还没到」处理，
+          // 继续轮询；native 侧仍会在它自己的超时后退出。
         }
       }
-      // Safety valve only. 2400 ticks at 250 ms is ten minutes -- far longer than
-      // any session, so in practice this never fires; it exists so a bug here
-      // cannot leave a timer running forever.
+      // [B] 只是安全阀。2400 个 tick、每个 250 ms，就是十分钟 —— 比任何一次会话都长得多，
+      // 所以实际上它从不会触发；它存在的意义是让这里的一个 bug
+      // 不至于留下一个永远跑着的定时器。
       if (ticks > 2400) {
         clearInterval(timer);
       }
@@ -237,79 +223,71 @@ export default class EntryAbility extends UIAbility {
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'SDL/STARTUP', '%{public}s', 'Handing control from ArkTS to native SDL.');
-    /*
-     * FIRST, and the position is the whole point.
+    /* [A]
+     * 放【第一】，位置本身就是重点。
      *
-     * launcher.c unlinks crash.txt every time main() is entered, so the previous
-     * launch's crash report survives only until native code starts. The handover
-     * to native is provideArkTSObjects() at the END of this method, and main() is
-     * what that starts -- so everything above that call runs while the report is
-     * still on disk, and nothing below it is guaranteed to.
+     * launcher.c 每次进入 main() 都会 unlink crash.txt，所以上一次启动的崩溃报告
+     * 只能存活到 native 代码开始运行之前。向 native 的交接是本方法【末尾】的
+     * provideArkTSObjects()，而 main() 正是由它启动的 —— 所以那次调用之上的所有东西
+     * 都是在报告还在磁盘上时运行的，而它之下没有任何东西有这个保证。
      *
-     * The cost of getting this wrong is silent: the report is simply gone, and
-     * the one case it exists for is the one where we have no other evidence.
-     * See diagnostics/ExportDiagnostics.ets.
+     * 搞错的代价是无声的：报告就这么没了，而它存在所针对的那唯一一种情形，
+     * 正是我们没有其他证据的那种。见 diagnostics/ExportDiagnostics.ets。
      */
     stashIfAny(this.context.filesDir);
     writeJvmOptions(want, this.context.filesDir);
     writeUserDirs(this.context.filesDir);
-    /*
-     * The folder CREATION happens on the page, not here, and this is reading only.
+    /* [A]
+     * 文件夹的【创建】发生在页面上，不在这里，而这里只是读。
      *
-     * This ran here for one revision, on the reasoning that the folder should
-     * exist before the launcher is told about it. It does not belong here: with
-     * the creation in onCreate, DOWNLOAD mode fails with 13900042 on BOTH
-     * devices -- and on the phone the same call had SUCCEEDED when it ran from a
-     * menu tap. The difference between those two runs is whether a UI window
-     * exists, which makes 13900042 look like "no usable window yet" even though
-     * DOWNLOAD mode shows no dialog.
+     * 有一个修订版把它放在这里跑，理由是：在 launcher 被告知这个文件夹之前，
+     * 它就应该存在。它不属于这里：把创建放进 onCreate，DOWNLOAD 模式在【两台】设备上
+     * 都以 13900042 失败 —— 而在手机上，同一个调用从菜单点按时本来是【成功】的。
+     * 这两次运行之间的差别在于是否存在一个 UI 窗口，这让 13900042 看起来像是
+     * 「还没有可用的窗口」，哪怕 DOWNLOAD 模式并不显示任何对话框。
      *
-     * So the split is: read here (cheap, no picker), create on the page (where the
-     * window is). writeUserDirs() above is the read.
+     * 所以分工是：在这里读（便宜、不碰选择器），在页面上创建（窗口在那儿）。
+     * 上面的 writeUserDirs() 就是那个读。
      *
-     * ⚠️ A scanModFolder() CALL USED TO BE HERE and is removed. It copied the
-     * folder's contents into the game's mods directory at every launch, which
-     * resurrected mods the player had deleted in the game. Nothing reads that
-     * folder's contents any more -- it exists to be the directory the game's own
-     * file browser opens in. See the note in Index.ets where the call was.
+     * ⚠️ 这里【以前】有一个 scanModFolder() 调用，已经移除。它每次启动都会把该文件夹的
+     * 内容复制进游戏的 mods 目录，从而复活玩家在游戏里删掉的 mod。现在没有任何东西
+     * 再读那个文件夹的内容 —— 它存在的意义就是充当游戏自己的文件浏览器打开的目录。
+     * 见 Index.ets 里那个调用原来所在处的说明。
      *
-     * The cost is unchanged and was already true: on a fresh install nothing has
-     * created the folder yet, so writeUserDirs() had nothing to put in the bridge
-     * and the game's browser opens in the sandbox for that one launch.
+     * 代价没变，而且本来就一直如此：在全新安装上还没有任何东西创建过这个文件夹，
+     * 所以 writeUserDirs() 没东西可放进桥接，游戏浏览器在那一次启动时会在沙箱里打开。
      */
     this.startExitWatch(this.context);
     try {
-        // This hands stuff to SDL's C code that it needs to deal with ArkTS interfaces. We are trying not to write scripting code, if we can
-        //  handle it awkwardly in C through NAPI calls, so we have a _tiny_ surface area of risk where the script and the native code can go
-        //  out of sync. This function call will add methods to `this`, such as onWindowStageCreate(), so we can drive everything from C and
-        //  have almost no ArkTS code at all.
-        // Which is to say: if this function call fails, your app won't actually start.
+        // [A] 这把 SDL 的 C 代码所需的、用来应付 ArkTS 接口的东西交给它。我们在尽量不写脚本代码，
+        //  能的话就用 C 通过 NAPI 调用来别扭地处理，这样「脚本和 native 代码不同步」
+        //  这块风险面就 _极小_。这个函数调用会往 `this` 上加方法，比如 onWindowStageCreate()，
+        //  于是我们可以从 C 驱动一切，几乎没有 ArkTS 代码。
+        // 也就是说：如果这个函数调用失败，你的应用实际上根本起不来。
         //
-        // ONLY EVER ADD PARAMETERS TO THIS FUNCTION CALL. THE C CODE WILL ABORT IF IT DOESN'T GET THE EXACT NUMBER IT EXPECTS.
+        // 【只允许往这个函数调用里加参数】。如果 C 代码拿不到它期望的确切数量，它会 abort。
         sdl.provideArkTSObjects(this, abilityAccessCtrl.createAtManager(), i18n.System, pointer.setPointerVisibleSync, inputMethod.getController());
     } catch (e) {
         hilog.info(DOMAIN, 'SDL/STARTUP', '%{public}s', 'Exception thrown! App will not start.');
     }
   }
 
-  /*
-   * There used to be an `onBackPress(): boolean` here that returned true,
-   * intended to stop the back key from closing the app.
+  /* [A]
+   * 这里【曾经】有一个返回 true 的 `onBackPress(): boolean`，
+   * 意图是阻止返回键关掉应用。
    *
-   * It was dead code, and it was dead in the worst way: `onBackPress` is not a
-   * UIAbility method -- the name the framework looks for is `onBackPressed` --
-   * so this was never invoked. It compiles, it runs, and it does nothing, which
-   * is indistinguishable from "the fix did not work" unless you go looking.
-   * Measured at the time: zero hits in hilog, i.e. never called once.
+   * 它是死代码，而且是最糟糕的那种死法：`onBackPress` 并不是 UIAbility 的方法 ——
+   * 框架找的名字是 `onBackPressed` —— 所以它从未被调用过。它能编译、能运行、
+   * 什么也不做，而这和「那个修复没起作用」是无法区分的，除非你去查。
+   * 当时的测量：hilog 里零命中，也就是一次都没被调用过。
    *
-   * It has been removed rather than renamed, because the real fix is elsewhere
-   * and this hook is not a lever anyway: `onBackPressed` returning true means
-   * "move to background instead of destroying", not "cancel the back".
+   * 它是被移除而不是被改名，因为真正的修复在别处，而且这个钩子本来也不是一个着力点：
+   * `onBackPressed` 返回 true 的意思是「转到后台而不是销毁」，不是「取消返回」。
    *
-   * ESC is handled in pages/Index.ets, where the key dispatch chain is:
-   *   onKeyPreIme (declines) -> XComponent (native, SDL takes the key)
-   *                          -> ancestor node (consumes, so the system does not)
-   * See the comments there for the measurements behind that ordering.
+   * ESC 在 pages/Index.ets 里处理，那里的按键派发链是：
+   *   onKeyPreIme（拒绝） -> XComponent（native，SDL 拿走这个键）
+   *                       -> 祖先节点（消费掉，这样系统就不会）
+   * 关于那个顺序背后的测量，见那里的注释。
    */
 }
 
