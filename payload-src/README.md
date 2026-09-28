@@ -22,9 +22,10 @@ each one is present.
 
 ```
 payload-src/
-├── Mindustry.jar                 the upstream release jar, unmodified
-├── mindustry-1.0.jar             DERIVED: the upstream jar + Arc patches
-├── mindustry-1.0-audio.jar       DERIVED: the above + the audio natives   <- the pinned one
+├── Mindustry.jar                 the upstream release jar, unmodified  <- SHIPPED AS-IS
+├── Mindustry-160.4.jar           the previous upstream release, kept for reference
+├── mindustry-1.0.jar             DERIVED (retired): upstream + Arc patches
+├── mindustry-1.0-audio.jar       DERIVED: the upstream natives + OURS   <- read for the natives
 ├── lwjgl-ohos/
 │   ├── lwjgl.jar                 LWJGL 3.4.2 Java half
 │   ├── lwjgl-opengl.jar
@@ -51,10 +52,20 @@ do. It travels in the payload release.
 
 | File | Source |
 |---|---|
-| `Mindustry.jar` | An official Mindustry release. Any build whose class files are major version 61 (Java 17) works; `patch_mindustry.py` identifies it by content |
+| `Mindustry.jar` | ⭐ **The official release, and the file that ships.** Download `Mindustry.jar` from the upstream GitHub releases; `prep_game.py` pins it by SHA-1, so a wrong build is refused rather than packed |
 | `lwjgl-ohos/` | LWJGL 3.4.2 for this platform. The copy used here was collected from a prebuilt HarmonyOS application that runs this game, which makes it a known-good set — but any 3.4.2 pair will do, and `prep_lwjgl.py` refuses to mix versions |
 | `jdk21slim/` | The payload release (see `RELEASE.md`) |
-| the three `mindustry-*.jar` | Produced here by `patch_mindustry.py` and `build_variants.py` |
+| `mindustry-1.0.jar` | **retired** — the upstream jar with our Arc classes written into it. Nothing reads it any more |
+| `mindustry-1.0-audio.jar` | The jar that carries **our** Arc natives. `prep_arc.py` extracts them from it into the bundle. ⚠️ **Not the shipped game jar** — see the naming note below |
+
+### ⚠️ Two jars used to be called `Mindustry.jar` and `GAME_JAR`, and that was wrong
+
+Until 2026-09-29 `config.GAME_JAR` pointed at `mindustry-1.0-audio.jar` while
+`config.UPSTREAM_JAR` pointed at `Mindustry.jar`, and the first of those reads as
+"the game jar" when it is not: what ships in the game slot is `Mindustry.jar`.
+The one that carries our natives has been renamed `NATIVES_JAR`, and it is a
+different file. Changing where it points would put upstream's audio-less
+`libarcarm64.so` into the bundle.
 
 ## Why the hashes matter
 
@@ -63,14 +74,17 @@ Every script checks its input's SHA-1 before writing anything, and
 ceremony: this project has twice shipped an artifact that was not the one it
 thought it was — once by re-running an upstream stage and forgetting a
 downstream one, once by reusing a stale library — and in both cases the build
-reported success. The pinned SHA-1 of the audio jar is the anchor that caught
-it, and it appears in two places that must be changed together:
+reported success.
+
+⭐ Since 2026-09-29 the anchor is an **upstream** artifact rather than our own
+multi-stage output, which makes it a stronger statement than it used to be. It
+appears in two places that must be changed together:
 
 - `scripts/prep_game.py` — `SRC_SHA1`
 - `scripts/verify_hap.py` — `WANT_GAME`
 
-If you re-run the jar chain, both have to be updated to the new hash, and this
-file should be updated too. `prep_game.py` fails loudly if they disagree.
+`prep_game.py` fails loudly if they disagree. A version bump means changing both,
+plus this file.
 
 ## What does NOT need to be here
 

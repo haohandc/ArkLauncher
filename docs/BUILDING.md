@@ -34,15 +34,36 @@ python scripts/config.py          # 打印每个路径，以及它是否存在
 python scripts/prep_jdklib.py     # JDK 里按名字读取的那两个文件
 python scripts/prep_jdkconf.py    # java.home 相对路径下的其余文件（conf/ 等）
 python scripts/prep_lwjgl.py      # LWJGL —— jar 改名，原生库原样
-python scripts/prep_arc.py        # Arc 的原生库，取自那个定版 jar
+python scripts/prep_arc.py        # Arc 的原生库，取自带着我们原生库的那份 jar
 python scripts/prep_freetype.py   # Arc 的 freetype，取自 Arc 的 Android 构建
-python scripts/prep_game.py       # 游戏 jar 本体
+python scripts/prep_game.py       # ⭐ 游戏 jar = 上游原版，逐字节不改
 python scripts/prep_helper.py     # 编译并打包 helper jar
 ```
 
 **每个脚本都会先校验输入的哈希**、写完再回读一遍，所以输入陈旧或不对时会
 **直接报错退出**，而不会悄悄产出与测试过的版本不一致的产物。
 每个脚本都支持 `--check`：只报告，不写文件。
+
+### 二之二、把我们的 Arc 修改打成补丁 jar
+
+```bash
+python scripts/build_arc_patch.py   # 编译两半补丁（arc-core + backend-sdl3）
+python scripts/make_patch_jar.py    # 装成 entry/libs/arm64-v8a/patchjar/arcpatch.so
+```
+
+⭐ **这一版架构（2026-09-29 起）里，游戏 jar 是上游原版、一个字节都不改**，
+我们的 Arc 类走这个独立的 jar，由启动器排在 classpath **最前面**压过同名类。
+
+⇒ 跟进上游因此变成：**换 `payload-src/Mindustry.jar` → 改两个 SHA-1 钉子 → 重建**，
+补丁类通常不用重新编译。实测：同一份补丁 jar 同时驱动 160.4 与 160.5。
+
+⚠️ **顺序是承重的**：`launcher.c` 里 `PATCH_JAR` 必须排在 `GAME_JAR` 前面，
+否则补丁完全不起作用，而应用只会「行为不对」、不报任何错。
+`verify_hap.py` 的第 6b 段会在产物里确认它在。
+
+⚠️ `make_patch_jar.py` 打包的是 **`arcbuild/sdl3` 整个目录** + 3 个 arc-core 类
+（共 26 个），不是「改动过的那些文件」—— 因为 `arc/backend/sdl/` 是**整目录替换**。
+收窄过一次，结果是设备上 `NoSuchFieldError: SdlConfig.appName`。
 
 JDK 派生的两个库（`jdk21/lib/server/libjvm_real.so` 与锚库 `libjvm.so`）出自
 `prep_vendor.py` —— 见该文件顶部的说明。
@@ -210,9 +231,9 @@ python scripts/config.py          # each path, and whether it exists
 python scripts/prep_jdklib.py     # the JDK pieces that are read by name
 python scripts/prep_jdkconf.py    # the rest of what java.home reads (conf/)
 python scripts/prep_lwjgl.py      # LWJGL -- jars renamed, natives in place
-python scripts/prep_arc.py        # Arc's natives, taken from the pinned jar
+python scripts/prep_arc.py        # Arc's natives, from the jar that carries OURS
 python scripts/prep_freetype.py   # Arc's freetype, from Arc's Android build
-python scripts/prep_game.py       # the game jar itself
+python scripts/prep_game.py       # ⭐ the game jar = upstream, byte for byte
 python scripts/prep_helper.py     # compiles and packs the helper jar
 ```
 
@@ -220,6 +241,30 @@ Each script checks its input's hash before writing anything and re-reads what it
 wrote, so a stale or wrong input fails loudly instead of producing a jar that
 silently differs from the one that was tested. Any of them takes `--check` to
 report without writing.
+
+### 2b. Pack our Arc changes into a patch jar
+
+```bash
+python scripts/build_arc_patch.py   # compiles both halves (arc-core + backend-sdl3)
+python scripts/make_patch_jar.py    # packs entry/libs/arm64-v8a/patchjar/arcpatch.so
+```
+
+⭐ **Since 2026-09-29 the game jar is upstream's, byte for byte.** Our Arc classes
+travel in this separate jar, which the launcher puts FIRST on the class path so
+they shadow the same-named classes in the game jar.
+
+⇒ Following an upstream release is now: replace `payload-src/Mindustry.jar`,
+update two SHA-1 pins, rebuild -- and usually do not recompile the patch at all.
+Measured: the same patch jar bytes drive both 160.4 and 160.5.
+
+⚠️ **The order is load-bearing.** `PATCH_JAR` must precede `GAME_JAR` in
+`launcher.c`, or the patch does nothing and the app merely behaves wrong without
+reporting anything. Section 6b of `verify_hap.py` checks the jar is in the package.
+
+⚠️ `make_patch_jar.py` packs **the whole `arcbuild/sdl3` directory** plus three
+arc-core classes (26 in total), not "the files we edited" -- because
+`arc/backend/sdl/` is replaced as a DIRECTORY. It was narrowed to the edited files
+once, and the device died with `NoSuchFieldError: SdlConfig.appName`.
 
 The JDK-derived libraries (`jdk21/lib/server/libjvm_real.so` and the anchor
 `libjvm.so`) come from `prep_vendor.py` — see the note at the top of it.
