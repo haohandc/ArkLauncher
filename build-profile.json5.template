@@ -1,0 +1,127 @@
+// build-profile.json5.template -- project build config TEMPLATE
+//
+// WHY THIS FILE EXISTS
+//   The real build-profile.json5 is NOT in git, because DevEco Studio writes the
+//   signing config straight into it -- certpath, keyAlias, keyPassword, profile,
+//   storeFile, storePassword. Committing that publishes personal signing material
+//   in a public repository. (The key FILES were never in here; they live in
+//   ~/.ohos/config/. Only the paths and the password blobs were at risk.)
+//
+// SETTING IT UP (once per clone, then two clicks)
+//   1. Put this file in place:
+//        cp build-profile.json5.template build-profile.json5     (Linux / macOS)
+//        Copy-Item build-profile.json5.template build-profile.json5   (PowerShell)
+//   2. DevEco Studio -> File -> Project Structure -> Signing Configs ->
+//      "Automatically generate signature". DevEco fills the signing block back in.
+//
+//   ⚠️ This project uses a Release certificate for store builds as well, so the
+//      generated debug signature alone is not enough to make an AppGallery .app.
+//      See scripts/make_store_app.sh and RELEASE-MAINTENANCE.md.
+//
+// WHAT IS *NOT* ASKED FOR
+//   Nothing else has to be configured by hand. entry/build-profile.json5 is a
+//   different file (buildOption / targets only, no signing material) and DOES
+//   stay committed.
+//
+// ⚠️ ADDING A PRODUCT TAKES TWO EDITS, NOT ONE
+//   Adding an entry to `products` below is not enough on its own. The product
+//   name must also appear in `modules[].targets[].applyToProducts`, or the
+//   product exists with no module target attached to it -- DevEco then shows the
+//   product selected and its signing config resolved, while the module target
+//   reads "No target to apply", and the build has nothing to package.
+
+{
+  "app": {
+    // Signing is deliberately EMPTY in this template.
+    //
+    // WHAT WAS HERE AND WHY IT IS GONE
+    //   DevEco Studio writes the signing config straight into this file:
+    //   certpath, keyAlias, keyPassword, profile, storeFile, storePassword.
+    //   Committing that publishes personal signing material -- password blobs
+    //   and the paths to the key files -- in a public repository.
+    //
+    //   The key files themselves live in ~/.ohos/config/ and were never inside
+    //   the repository, so no key material was ever uploaded; but there is no
+    //   reason to publish the rest of it either.
+    //
+    //   ONE RESTRICTED PERMISSION DOES HAVE TO BE REQUESTED, and this paragraph
+    //   used to say the opposite. `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY`
+    //   is level `normal` since API 12, but Huawei requires it to keep going
+    //   through the restricted/ACL route for compatibility. AppGallery's
+    //   admission check compares what the package declares against the ACL list
+    //   in the Profile: a declaration with no matching ACL entry is a failure,
+    //   and the package is not what gets changed -- the Profile is regenerated.
+    //
+    //   So for AppGallery: request that ACL in AGC, then build the Release
+    //   profile from the result. For local installs nothing is needed, because a
+    //   debug profile is not checked this way. See module.json5 for the
+    //   permission that was removed and the measurement behind that decision.
+    //
+    // ⚠️ THE PARAGRAPH ABOVE IS CARRIED OVER VERBATIM FROM THE COMMITTED FILE
+    //    and has NOT been re-checked against current policy. It is known to be
+    //    at least partly superseded (2026-09-24): an ACL that has been granted
+    //    cannot be removed, and the `READ_WRITE_DOWNLOAD_DIRECTORY` entry that
+    //    stays in the Profile as a result has no effect on the app. Whether the
+    //    "has to be requested" claim still holds has NOT been verified -- check
+    //    it before acting on it. See RELEASE-MAINTENANCE.md.
+    //
+    // KEEPING A LOCAL COPY OUT OF GIT
+    //   This file is listed in .gitignore (/build-profile.json5), so a filled-in
+    //   copy stays local and cannot be swept in by `git add -A`.
+    //
+    //   It used to be handled differently: `git update-index --skip-worktree
+    //   build-profile.json5`, which also works, and the committed copy carried
+    //   instructions saying so. That mechanism was replaced on 2026-09-24
+    //   because the skip-worktree flag lives in this MACHINE's git config and is
+    //   not carried by the repository -- a fresh clone, or a stray
+    //   `--no-skip-worktree`, left the real file fully exposed, and .gitignore
+    //   cannot help once a file is tracked. The guard now travels with the repo.
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        // Verified combination on HarmonyOS 7 (API 26). The APIs used here need
+        // far less: the ArkUI key hooks are API 12 and API 15.
+        //
+        // Do not raise targetSdkVersion above what the target device runs, and do
+        // not lower compatibleSdkVersion without testing on a device -- the
+        // @kit.* import style and the Environment file APIs are only verified at
+        // this level.
+        "targetSdkVersion": "26.0.0",
+        "compatibleSdkVersion": "6.1.1(24)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          // Adding a product? Its name belongs in this list too -- see the note
+          // at the top of this file.
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -59,8 +59,17 @@ bash deploy.sh                   # 构建 + 校验 + 安装 + 启动 + 收日志
 `deploy.sh` 会在三种情况下**拒绝继续**：native 产物比源码旧、构建失败、打包校验不通过。
 因为这三种情况各自都曾导致「构建显示成功，实际装上去的是上一次的产物」。
 
+⚠️ **全新克隆要先补一份签名配置的骨架。** 根目录的 `build-profile.json5` **不在仓库里**
+—— DevEco Studio 会把签名物料（certpath、keyPassword、storeFile、storePassword…）
+直接写进那份文件，那些不属于公开仓库。仓库里带的是它的骨架：
+
+```bash
+cp build-profile.json5.template build-profile.json5
+```
+
 签名需要配置一次：DevEco Studio → File → Project Structure → Signing Configs →
-Automatically generate signature。`deploy.sh` 安装的是 hvigor 产出的**已签名** HAP。
+Automatically generate signature —— 它会写进上面那份文件。`deploy.sh` 安装的是 hvigor
+产出的**已签名** HAP。
 
 #### ⚠️ 改了 native 编译标志之后（`-ffile-prefix-map` 等）
 
@@ -294,9 +303,19 @@ what gets changed:
 ⚠️ Local installs (product `default`, debug certificate) need none of this — a
 debug profile is not checked this way.
 
-Signing must be configured once: DevEco Studio → File → Project Structure →
-Signing Configs → Automatically generate signature. `deploy.sh` installs the
-signed HAP that hvigor produces.
+⚠️ **A fresh clone needs the signing config's skeleton put in place first.** The root
+`build-profile.json5` is **not in the repository** — DevEco Studio writes the signing
+material straight into it (certpath, keyPassword, storeFile, storePassword, …), and
+none of that belongs in a public repository. What the repository carries is its
+skeleton:
+
+```bash
+cp build-profile.json5.template build-profile.json5
+```
+
+Signing must then be configured once: DevEco Studio → File → Project Structure →
+Signing Configs → Automatically generate signature — which writes into the file
+above. `deploy.sh` installs the signed HAP that hvigor produces.
 
 #### ⚠️ After touching a native compile flag (`-ffile-prefix-map`, etc.)
 

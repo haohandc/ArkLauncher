@@ -65,8 +65,50 @@ clean_perms.py
 /entry/src/main/cpp/cxatls.c
 /entry/src/main/cpp/libcxxabi_real.so
 
-# Signing config with real key paths/passwords. Never commit this: it is
+# Signing config with real key paths/passwords. Never commit these: they are
 # machine-specific, and the password blobs do not belong in a public repository.
+#
+# TWO files hold signing material, and until 2026-09-24 only the first was listed
+# here -- while the second was the one that actually carried it:
+#
+#   build-profile.local.json5   DevEco's own local override. Listed here from the
+#                               start, and it holds a signing config.
+#   /build-profile.json5        THE ROOT ONE. DevEco Studio writes the signing
+#                               config straight into it -- certpath, keyAlias,
+#                               keyPassword, profile, storeFile, storePassword.
+#
+# The root file used to be kept out of the way with `git update-index
+# --skip-worktree`, which does work -- but that flag lives in THIS MACHINE's git
+# config and is not carried by the repository. A fresh clone, or a stray
+# `--no-skip-worktree`, left it fully exposed, and .gitignore cannot help once a
+# file is tracked. The guard now lives here, where it travels with the repo.
+#
+# The committed skeleton is build-profile.json5.template -- copy it into place:
+#     cp build-profile.json5.template build-profile.json5
+# entry/build-profile.json5 is a DIFFERENT file (buildOption / targets only, no
+# signing material) and stays committed. The leading slash matters: a bare
+# `build-profile.json5` would match that one too.
+#
+# DELIBERATELY NOT `*.json5`. That glob gets proposed every so often, and it is
+# the wrong axis: .json5 is a FORMAT, not a risk class. What matters is whether a
+# file holds secrets, and exactly two do -- both listed by path above.
+#
+# Eleven other .json5 files here are load-bearing and MUST stay committed:
+#     AppScope/app.json5                      versionName / versionCode / bundleName
+#     entry/src/main/module.json5             permissions, deviceTypes
+#     entry/build-profile.json5               artifactName
+#     entry/src/main/cpp/types/*/oh-package.json5   one per NAPI module
+#     oh-package.json5, *-lock.json5, code-linter.json5, hvigor-config.json5
+# A glob would not touch the already-tracked ones anyway (.gitignore has no effect
+# on tracked files), so it would add ZERO protection while silently hiding every
+# FUTURE .json5 from `git status` -- a new NAPI module's oh-package.json5 would
+# never get committed and a fresh clone would not build, with nothing on screen
+# to say why. Silent, and exactly the class of failure this section exists to
+# prevent.
+/build-profile.json5
+
+# DevEco's own local override. It also holds a signing config, and it was the
+# only one of the two listed here before 2026-09-24.
 build-profile.local.json5
 
 # Diagnostic / measurement harnesses used while developing. They are specific to
