@@ -159,6 +159,12 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 | **应用图标** | 换为手绘图标 |
 | **仓库首页** | 仓库首页改为中文，英文版在 `README.en.md` |
 
+**修复**
+
+| 问题 | 说明 |
+|---|---|
+| **开着「坚盾守护模式」时点开即退，且不给任何提示** | 该模式会禁止应用申请可执行内存，Java 虚拟机因此无法创建。此前表现为**无声退出** —— 没有提示、没有日志、屏幕上什么都不说。现在会说明原因，并给出关闭路径：设置 → 隐私和安全 → 坚盾守护模式 |
+
 ### 1.0.0.1 — 2026-09-22 · 1.0.0 的 RC 1
 
 功能已冻结，之后只修阻断性问题。
@@ -390,6 +396,12 @@ Full support for all of Mindustry's native features.
 |---|---|
 | **App icon** | Replaced with a hand-drawn icon |
 | **Repository front page** | The repository README is now Chinese; the English one is `README.en.md` |
+
+**Fixed**
+
+| Problem | Notes |
+|---|---|
+| **Closes on launch with no message while Secure Shield Mode is on** | That mode forbids the app anonymous executable memory, so the Java VM cannot be created. It used to die silently — no message, no log, nothing on screen. It now states the reason and names the setting to turn off: Settings → Privacy and security → Secure Shield Mode |
 
 ### 1.0.0.1 — 2026-09-22 · RC 1 of 1.0.0
 
