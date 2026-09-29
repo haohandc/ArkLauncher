@@ -13,8 +13,9 @@
 ⚠️ **非官方项目。** 与 Mindustry 及 Anuken 无隶属关系。以 **GPL-3.0** 分发
 （构建产物再分发了 GPL-3.0 的 Mindustry）。
 
-内嵌的游戏版本：**Mindustry `v8 Build 160.4`**（游戏内显示 `release build 160.4`）。
+内嵌的游戏版本：**Mindustry `v8 Build 160.5`**（游戏内显示 `release build 160.5`）。
 ⚠️ 这是 **Mindustry 自己的**版本号，与本项目的版本号是**两套体系**，各走各的。
+⭐ 随包发布的这份游戏本体是**未经修改的上游原版** —— 与官方发布的那份文件**逐字节相同**。
 
 ## 下载哪个文件
 
@@ -141,6 +142,34 @@ bash deploy.sh          # 构建 + 校验 + 安装 + 启动 + 收日志
 
 ## 版本历史
 
+### 1.1.0.1 — 2026-09-29 · 架构更新
+
+内嵌的游戏本体升级到上游 `v8 Build 160.5`，并改为**未经修改的上游原版**；启动器需要的适配代码独立成一份补丁，在游戏之前加载。
+
+**变动**
+
+| 项目 | 说明 |
+|---|---|
+| **内嵌游戏** | `160.4` → `160.5` |
+| **游戏本体** | 改为上游原版，**未做任何修改** |
+| **适配代码** | 从游戏本体中移出，独立成一份补丁 |
+
+本版本**没有本项目自身的功能性改动**。
+
+**修复**
+
+以下是**上游 `160.5` 修的问题**（不是本项目修的），挑的是玩家能感觉到的部分；完整列表见上游发布页。
+
+| 问题 | 说明 |
+|---|---|
+| **命中框极大的实体导致线程卡死** | 表现为卡顿或无响应 |
+| **地图描述不换行** | 长描述挤成一行 |
+| **逻辑处理器** | 超过 `Long.MAX_VALUE` 的十六进制 / 二进制数值无法解析；重启后图形与文本缓冲不清空；界面的形状文字标记无法选中 |
+| **产出被增益时生产方块跟不上** | 输出速度不够 |
+| **靶机** | 附近有大型命中框的靶机时无法降落 |
+| **数据补丁** | 液体容量为 0 的方块不再显示液体条；图像现在会做边缘透明扩散与抗锯齿，和原版精灵图一致 |
+| **服务器 / 模组** | 隐藏 UI 时某些弹窗仍然显示；模组浏览器现在会优先显示标题与当前游戏版本匹配的模组版本 |
+
 ### 1.0.0.2 — 2026-09-28 · 1.0.0 的 RC 2
 
 已完整支持所有 Mindustry 原生功能。
@@ -240,8 +269,10 @@ emulation layer involved.
 ⚠️ **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry project
 or Anuken. Distributed under **GPL-3.0** (the build redistributes GPL-3.0 Mindustry).
 
-Embedded game version: **Mindustry `v8 Build 160.4`** (in-game: `release build 160.4`).
+Embedded game version: **Mindustry `v8 Build 160.5`** (in-game: `release build 160.5`).
 ⚠️ That is the *game's* version, not this project's — the two move independently.
+⭐ The game binary shipped here is the **unmodified upstream release** — **byte for byte** the
+file Anuken publishes.
 
 ## Which file to download
 
@@ -378,6 +409,37 @@ bash deploy.sh          # build + verify + install + launch + collect log
 (configure signing as under "Installing")
 
 ## Changelog
+
+### 1.1.0.1 — 2026-09-29 · architecture
+
+The embedded game is updated to upstream `v8 Build 160.5` and is now the **unmodified upstream
+release**; the adaptation code the launcher needs was moved out into a patch of its own, which
+loads ahead of the game.
+
+**Changed**
+
+| Item | Notes |
+|---|---|
+| **Embedded game** | `160.4` → `160.5` |
+| **The game binary** | Now the upstream release, **modified in no way** |
+| **The adaptation code** | Moved out of the game binary into a patch of its own |
+
+This version has **no functional changes of this project's own**.
+
+**Fixed**
+
+These are **fixes in upstream `160.5`** (not made by this project); the ones a player is likely
+to notice. The full list is on the upstream release page.
+
+| Problem | Notes |
+|---|---|
+| **Entities with extremely large hitboxes freezing a thread** | Shows up as a stall or an unresponsive game |
+| **Map descriptions not wrapping** | Long descriptions crammed onto one line |
+| **Logic processors** | Hex / binary values above `Long.MAX_VALUE` would not parse; the graphics and text buffers did not clear on restart; the shape text marker could not be selected in the logic UI |
+| **Crafters lagging when their output is boosted** | They could not output fast enough |
+| **Target dummies** | Would not land when other dummies with large hitboxes were nearby |
+| **Data patches** | Blocks with 0 liquid capacity no longer draw liquid bars; images now get alpha bleeding and antialiasing, matching how vanilla sprites are processed |
+| **Servers / mods** | Certain popups still showed on servers while the UI was hidden; the mod browser now prioritises mod releases whose title matches the current game version |
 
 ### 1.0.0.2 — 2026-09-28 · RC 2 of 1.0.0
 

@@ -125,7 +125,8 @@ Automatically generate signature —— 它会写进上面那份文件。`deploy
    `libcxxabi_shim.so` 6）。**后两个是刻意不修的**，理由写在发布检查表那一条里 ——
    **看到它们不是回归**，但**看到 `libSDL3.so` 有命中就是**。
 3. ⚠️ 改完要**验它还能跑**（native 标志改动真的会影响运行）：装机 → 启动 →
-   看 `Mindustry 160.4` 那几行和音频回调，别只看构建成功。
+   看 `[Mindustry] Version:` 那行和音频回调，别只看构建成功。
+   ⭐ 用这个串而不是版本号 —— 它是**游戏自己**的格式串（在 `mindustry/Vars.class` 里），**跨版本不变**。
 
 #### 上架用的包（`.app`）是另一条命令
 
@@ -383,8 +384,10 @@ in [RELEASE-MAINTENANCE.md](../RELEASE-MAINTENANCE.md)). Changing flags there ha
    `libcxxabi_shim.so` 6). **The last two are deliberately left; seeing them is not
    a regression — seeing any hit in `libSDL3.so` is.**
 3. ⚠️ Then **verify it still runs** (a native flag change really can affect
-   execution): install, launch, and look for the `Mindustry 160.4` lines and the
+   execution): install, launch, and look for the `[Mindustry] Version:` line and the
    audio callbacks. A green build is not that check.
+   ⭐ Search for that string rather than a version number — it is the **game's own** format
+   string (in `mindustry/Vars.class`) and **does not change between versions**.
 
 ⚠️ **That signature is for your own machine.** DevEco's automatically generated
 profile is a *debug* profile, which names the device UDIDs it is valid for, and
