@@ -52,18 +52,18 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
-# The checkout of Arc's sources that gets compiled from (ARK_ARC_SRC). The three
-# classes below are the only Arc files this project modifies.
+# 编译所用的 Arc 源码检出目录（ARK_ARC_SRC）。下面这三个
+# 类是本项目唯一修改的 Arc 文件。
 ARC = config.ARC_SRC
 SRC = os.path.join(ARC, "backends", "backend-sdl3", "src",
                    "arc", "backend", "sdl", "SdlApplication.java")
-# The touch/pinch patch lives here. Recompiled by the same run, and gated the
-# same way -- see MARKER3/MARKER4 and the note about why one marker is not
-# enough for a file that gets edited over time.
+# 触摸/捏合补丁在这里。同一轮运行会重新编译它，门禁方式
+# 相同 -- 见 MARKER3/MARKER4，以及关于为什么一个标记
+# 对一个会被反复编辑的文件不够用的说明。
 SRC_INPUT = os.path.join(ARC, "backends", "backend-sdl3", "src",
                          "arc", "backend", "sdl", "SdlInput.java")
-# Decouples the file browser's root from the game's data directory, so "import
-# save" can open somewhere the player can actually put a file.
+# 把文件浏览器的根目录与游戏数据目录解耦，使 "import
+# save" 能打开玩家真正放得下文件的地方。
 SRC_FILES = os.path.join(ARC, "backends", "backend-sdl3", "src",
                          "arc", "backend", "sdl", "SdlFiles.java")
 SRC_ROOT = os.path.join(ARC, "backends", "backend-sdl3", "src")
@@ -100,54 +100,54 @@ def backend_sources():
                 out.append(os.path.join(dp, f))
     return sorted(out)
 
-# The LWJGL jars, needed on the compile class path because Arc's SDL3 backend
-# references org.lwjgl.* -- same directory prep_lwjgl.py ships from.
+# LWJGL 的 jar，编译类路径需要它们，因为 Arc 的 SDL3 后端
+# 引用了 org.lwjgl.* -- 与 prep_lwjgl.py 发布的是同一目录。
 LWJGL = config.LWJGL_SRC
 ARCBUILD = os.path.join(config.TMP, "arcbuild")
 OUT_SDL3 = os.path.join(ARCBUILD, "sdl3", "arc", "backend", "sdl")
 
 JAVAC = config.JAVAC
 
-# Present in the new code, absent from the old. Checking the compiled class for it
-# is what distinguishes "recompiled" from "the previous class files are still
-# sitting there".
+# 新代码里有，旧代码里没有。在编译产物里检查它，才能区分
+# "已重新编译" 与 "之前的 class 文件还
+# 原样躺在那"。
 MARKER = b"arc.sdl.glEs"
-# Both properties must be in the compiled class. Checking one would pass while the
-# other edit was never picked up, which is the failure this whole script exists to
-# prevent -- and they are edited at different times, so "recompiled since the last
-# change I remember" is not a safe assumption.
+# 两个属性都必须出现在编译产物里。只查一个可能通过，而另一处
+# 修改根本没被带进去，这正是整个脚本要防止的失败 -- 而且它们
+# 是不同时间改的，所以 "自上次我记得的修改以来已重新编译"
+# 不是一个安全的假设。
 MARKER2 = b"arc.sdl.mobile"
 
-# Present in the new SdlInput code, absent from the old (which ignored
-# SDL_EVENT_FINGER_* entirely and answered every pointer query with pointer 0).
-# These are field names, so they land in the class constant pool through the
-# field references the new methods make.
+# 新 SdlInput 代码里有，旧代码里没有（旧代码完全忽略
+# SDL_EVENT_FINGER_*，并且对所有指针查询都回答指针 0）。
+# 这些是字段名，会通过新方法产生的字段引用
+# 进入类的常量池。
 MARKER3 = b"MAX_TOUCH_POINTERS"
 MARKER4 = b"pointerJustDown"
-# Added later than the two above, and gated separately for that reason: those two
-# were already present in both the source and the previously-shipped class, so
-# they cannot tell a rebuilt SdlInput.class from a stale one. This one can -- it
-# is a method name introduced by the hover-follows-touch fix, so it exists only in
-# a class compiled from the source as it stands now.
+# 比上面两个加得更晚，因此单独设门禁：那两个在源码和之前发布的
+# class 里都已存在，所以无法区分重新构建的 SdlInput.class 和过期的。
+# 这个可以 -- 它是 hover 跟随触摸修复引入的方法名，因此只存在于
+# 由当前状态的源码编译出来的
+# class 里。
 MARKER7 = b"syncMouseToFinger"
 
-# Present in the new SdlFiles code, absent from the old (the browser root used
-# to be inseparable from the game data path).
+# 新 SdlFiles 代码里有，旧代码里没有（浏览器根目录以前
+# 与游戏数据路径不可分割）。
 MARKER5 = b"arc.sdl.chooserPath"
 MARKER6 = b"chooserPath"
 
 # ---------------------------------------------------------------------------
-# arc-core: the two classes patched in the core module (not the SDL3 backend).
+# arc-core：核心模块（不是 SDL3 后端）中被修补的两个类。
 #
-# ⚠️ Added 2026-09-28. Until this change NOTHING in this repository produced
-# these three class files -- patch_mindustry.py expects them in arcbuild/core
-# and treats that directory as an INPUT, but no script wrote it. The directory
-# was populated by hand, once, and then lost; when this was investigated the
-# directory was empty and the classes could not be rebuilt at all.
+# ⚠️ 2026-09-28 添加。在此改动之前，本仓库中没有任何东西会产出
+# 这三个 class 文件 -- patch_mindustry.py 期望它们位于 arcbuild/core
+# 并把该目录当作 INPUT，但没有脚本写它。该目录曾被人手工
+# 填充过一次，随后丢失；调查此事时该目录是空的，
+# 这些类根本无法重新构建。
 #
-# That is the same shape of gap as the un-reproducible libarcarm64.so, except
-# this one is fixable: the sources are on disk, and the changes in them are
-# real (checked against upstream below).
+# 这与不可复现的 libarcarm64.so 是同一种缺口，只是
+# 这个可以修：源码在磁盘上，其中的改动是
+# 真实的（下面会与上游比对）。
 # ---------------------------------------------------------------------------
 SRC_GLVERSION = os.path.join(ARC, "arc-core", "src",
                              "arc", "graphics", "gl", "GLVersion.java")
@@ -155,38 +155,38 @@ SRC_SHADER = os.path.join(ARC, "arc-core", "src",
                           "arc", "graphics", "gl", "Shader.java")
 OUT_CORE = os.path.join(ARCBUILD, "core")
 
-# Present in the new GLVersion code, absent from the old. The patch adds
+# 新 GLVersion 代码里有，旧代码里没有。补丁新增了
 #     if(versionString != null && versionString.contains("OpenGL ES")) ...
-# against the old first line, which only tested appType == android -- so the
-# call it introduces is the marker. It is the String.contains descriptor rather
-# than the literal "OpenGL ES" because that literal is already in the upstream
-# class (its version parsing uses it), which would make it prove nothing.
+# 对应旧代码的第一行，旧行只判断了 appType == android -- 所以它
+# 引入的调用就是标记。用 String.contains 的描述符而不是
+# 字面量 "OpenGL ES"，是因为该字面量在上游 class 里
+# 已经存在（其版本解析会用到它），那样什么都证明不了。
 MARKER8 = b"(Ljava/lang/CharSequence;)Z"
-# Present in the new Shader code, absent from the old: the import of GLVersion
-# and the switch from app-type to GL-flavour means Shader.class now REFERENCES
-# GLVersion$GlType, which the upstream class does not.
+# 新 Shader 代码里有，旧代码里没有：对 GLVersion 的 import
+# 以及从 app 类型改为按 GL 版本判断，意味着 Shader.class 现在会引用
+# GLVersion$GlType，而上游 class 不会。
 MARKER9 = b"GLVersion$GlType"
 
-# ⚠️ SOURCE markers are a DIFFERENT thing from the class markers above, and this
-# is where that distinction had to be made explicit.
+# ⚠️ SOURCE 标记与上面的 class 标记是 DIFFERENT 的东西，这里
+# 必须把这一区分讲明确。
 #
-# The markers above are checked against the COMPILED BYTES. The three SDL3
-# markers happen to be string literals, which exist in the source and in the
-# bytes alike, so one marker served both gates and the difference never showed.
-# MARKER8 is a method descriptor: it is written by javac and appears NOWHERE in
-# the source. Feeding it to the source gate fails every time -- which is exactly
-# what happened the first time this was run.
+# 上面的标记是拿 COMPILED BYTES 来检查的。那三个 SDL3
+# 标记恰好是字符串字面量，源码和字节里都有，
+# 所以一个标记同时服务两道门禁，差异从未显现。
+# MARKER8 是方法描述符：它由 javac 写出，在源码里 NOWHERE
+# 都不出现。把它喂给源码门禁每次都会失败 -- 这正是
+# 第一次运行这个脚本时发生的事。
 #
-# So the source gate gets its own markers, taken from the source text of the
-# change itself.
+# 所以源码门禁有自己的一套标记，取自改动本身的
+# 源码文本。
 SRC_MARK_GLVERSION = b"!= null && versionString.contains"
 SRC_MARK_SHADER = b"glType == GlType.GLES"
 
-# GLVersion$GlType carries no behaviour change -- it is recompiled because it
-# sits next to GLVersion, not because we edited it. There is therefore no marker
-# that could tell our copy from the upstream one, and it is checked for the
-# bytecode version alone. Saying so here is the point: a marker would have to be
-# invented, and an invented marker on an unchanged class proves nothing.
+# GLVersion$GlType 没有行为变化 -- 重新编译它是因为它
+# 挨着 GLVersion，不是因为我们改了它。因此没有标记
+# 能区分我们的副本和上游的副本，它只检查
+# 字节码版本。在这里说明这一点才是关键：标记只能
+# 凭空发明，而给未改动的类发明标记什么都证明不了。
 CORE_PRODUCES = ["arc/graphics/gl/GLVersion.class",
                  "arc/graphics/gl/GLVersion$GlType.class",
                  "arc/graphics/gl/Shader.class"]
@@ -224,8 +224,8 @@ def build_core():
                 return 1
             print("%s carries the change: %s" % (os.path.basename(path), name))
 
-    # Shader.java references org.lwjgl.opengl.*, so the LWJGL jars are needed even
-    # though this is the core module.
+    # Shader.java 引用了 org.lwjgl.opengl.*，所以即使这是核心
+    # 模块也需要 LWJGL 的 jar。
     jars = [os.path.join(LWJGL, f) for f in sorted(os.listdir(LWJGL))
             if f.endswith(".jar")]
 
@@ -248,9 +248,9 @@ def build_core():
         if out.strip():
             print(out)
 
-        # Same two-part gate as the backend: bytecode major, then a marker that
-        # only the patched source produces. GLVersion$GlType is checked for the
-        # major version only -- see the note on CORE_PRODUCES.
+        # 与后端相同的两段式门禁：先字节码主版本，再查只有打过补丁的
+        # 源码才会产出的标记。GLVersion$GlType 只检查
+        # 主版本 -- 见 CORE_PRODUCES 处的说明。
         for cls, markers in (("GLVersion.class", (MARKER8,)),
                              ("GLVersion$GlType.class", ()),
                              ("Shader.class", (MARKER9,))):
@@ -272,9 +272,9 @@ def build_core():
                   % (cls, "" if not markers else
                      ", contains " + ", ".join(repr(m.decode()) for m in markers)))
 
-        # Clear only the three files this step owns. Wiping the directory would
-        # also delete anything else a future step puts there, and the whole point
-        # of this function is that the directory has an owner now.
+        # 只清理本步骤自己拥有的三个文件。清空目录还会
+        # 删掉未来步骤放在那里的其他东西，而本函数的全部
+        # 意义就在于这个目录现在有主了。
         for rel in CORE_PRODUCES:
             stale = os.path.join(OUT_CORE, rel.replace("/", os.sep))
             if os.path.isfile(stale):
@@ -288,7 +288,7 @@ def build_core():
             installed += 1
         print("installed %d class file(s) into %s" % (installed, OUT_CORE))
 
-    # Verify from the installed copy, not from the temporary one.
+    # 从安装后的副本校验，而不是从临时副本。
     for rel, markers in (("arc/graphics/gl/GLVersion.class", (MARKER8,)),
                          ("arc/graphics/gl/GLVersion$GlType.class", ()),
                          ("arc/graphics/gl/Shader.class", (MARKER9,))):
@@ -306,9 +306,9 @@ def build_core():
 
 
 def main():
-    # Each source is checked for its own markers, against its own contents. A
-    # marker found in the wrong file would prove nothing, which is why these are
-    # paired up rather than pooled into one list.
+    # 每个源码都用各自的标记、对照各自的内容来检查。在错误的
+    # 文件里找到的标记什么都证明不了，所以这里是配对使用
+    # 而不是汇总到一个列表里。
     for path, markers in ((SRC, (MARKER, MARKER2)), (SRC_INPUT, (MARKER3, MARKER4, MARKER7)),
                           (SRC_FILES, (MARKER5, MARKER6))):
         if not os.path.isfile(path):
@@ -324,8 +324,8 @@ def main():
                 return 1
             print("%s carries the change: %s" % (os.path.basename(path), name))
 
-    # arc-core first: the SDL3 compile below puts ARCBUILD/core on its class path,
-    # so it has to exist and be current before that compile runs.
+    # 先 arc-core：下面的 SDL3 编译会把 ARCBUILD/core 放进类路径，
+    # 所以它必须先存在且是最新的，那次编译才能跑。
     core_rc = build_core()
     if core_rc != 0:
         return core_rc
@@ -357,9 +357,9 @@ def main():
         if out.strip():
             print(out)
 
-        # Both classes are read back from what javac actually wrote, with their
-        # own markers. Bytecode major 61 (Java 17) is checked per class, because
-        # a class compiled for the wrong release would only fail on the device.
+        # 两个类都从 javac 实际写出的内容读回，并用各自的标记。
+        # 每个类都检查字节码主版本 61（Java 17），因为按错误
+        # 版本编译的类只会在设备上失败。
         for cls, markers in (("SdlApplication.class", (MARKER, MARKER2)),
                              ("SdlInput.class", (MARKER3, MARKER4, MARKER7)),
                              ("SdlFiles.class", (MARKER5, MARKER6))):
@@ -380,9 +380,9 @@ def main():
             print("compiled: %s major=61, contains %s"
                   % (cls, ", ".join(repr(m.decode()) for m in markers)))
 
-        # Clear stale .class files first. patch_mindustry.py takes this directory
-        # WHOLE, so a class left behind by an earlier run -- or by a class we have
-        # since removed -- would be packed as if it were current.
+        # 先清理过期的 .class 文件。patch_mindustry.py 会把这个目录
+        # 整体打包，所以早先运行残留的、或我们后来删除的
+        # 类，会被当成最新的打进去。
         os.makedirs(OUT_SDL3, exist_ok=True)
         removed = 0
         for f in os.listdir(OUT_SDL3):
@@ -401,9 +401,9 @@ def main():
             shutil.copyfile(src_p, os.path.join(OUT_SDL3, f))
         print("installed %d class file(s) into %s" % (len(compiled), OUT_SDL3))
 
-        # The directory is consumed as a whole by patch_mindustry.py, so what
-        # lands there has to be exactly what was compiled -- no leftovers, no
-        # silent drops. A count alone would not catch a swap.
+        # 该目录被 patch_mindustry.py 整体消费，所以落到那里的
+        # 必须恰好是编译出来的内容 -- 没有残留、没有
+        # 静默丢失。只看数量抓不住调包。
         landed = set(f for f in os.listdir(OUT_SDL3) if f.endswith(".class"))
         if landed != set(compiled):
             print("FAIL installed set != compiled set")
@@ -412,13 +412,13 @@ def main():
             return 1
         print("installed set == compiled set (%d files)" % len(landed))
 
-    # Verify from the installed copy, not from the temporary one.
+    # 从安装后的副本校验，而不是从临时副本。
     for name in PRODUCES:
         p = os.path.join(OUT_SDL3, name)
         if not os.path.isfile(p):
             print("FAIL %s was not installed" % name)
             return 1
-    for cls, marker in (("SdlApplication.class", MARKER), ("SdlInput.class", MARKER3),  # MARKER7 checked above; this late pass is a second, independent read
+    for cls, marker in (("SdlApplication.class", MARKER), ("SdlInput.class", MARKER3),  # MARKER7 上面已检查；这次迟到的扫描是第二次独立读取
                         ("SdlFiles.class", MARKER5)):
         installed_blob = open(os.path.join(OUT_SDL3, cls), "rb").read()
         if marker not in installed_blob:

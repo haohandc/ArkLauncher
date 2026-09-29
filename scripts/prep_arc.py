@@ -45,27 +45,27 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
-# ⚠️ NOT the shipped game jar. This is the jar that carries OUR Arc natives, and
-# it is a different file from UPSTREAM_JAR -- the one that ships. They were called
-# GAME_JAR and UPSTREAM_JAR until 2026-09-28, which read as though they were the
-# same thing; see the note in config.py.
+# ⚠️ 不是发布的游戏 jar。这是携带我们 Arc natives 的 jar，与
+# UPSTREAM_JAR（真正发布的那个）是不同的文件。它们在 2026-09-28
+# 之前叫 GAME_JAR 和 UPSTREAM_JAR，读起来像是同一个
+# 东西；见 config.py 中的说明。
 #
-# Pointing this at the pristine upstream jar would put upstream's audio-less
-# libarcarm64.so into the bundle. The NATIVES pins below would catch it, but the
-# build would stop rather than ship, and the reason would look like a hash
-# mismatch rather than a wrong input.
+# 把它指向原始的上游 jar 会把上游那个无音频的
+# libarcarm64.so 放进 bundle。下面的 NATIVES 钉子会抓住它，但
+# 构建会中止而不是发布，而且原因看起来像是个哈希
+# 不匹配，而不是输入错误。
 JAR = config.NATIVES_JAR
 DEST_DIR = os.path.join(PROJECT_ROOT, "entry", "libs", "arm64-v8a", "arc")
 
-# name inside the jar -> sha1
+# jar 内的名字 -> sha1
 #
-# libarc-freetypearm64.so is NOT in this table, deliberately. The copy in the jar
-# is a glibc build (DT_NEEDED libc.so.6 and ld-linux-aarch64.so.1) and cannot load
-# on OpenHarmony at all. It is produced by prep_freetype.py instead, from Arc's
-# Android build, and that script owns the destination file. Listing it here would
-# overwrite the working copy with the unusable one, and the game would die in
-# font setup again -- after the window and the first frame, so it would look like
-# a regression in something else.
+# libarc-freetypearm64.so 刻意不在这个表里。jar 里的那份
+# 是 glibc 构建（DT_NEEDED libc.so.6 和 ld-linux-aarch64.so.1），在
+# OpenHarmony 上根本无法加载。它改由 prep_freetype.py 从 Arc 的
+# Android 构建产出，那个脚本负责目标文件。把它列在这里会
+# 用不可用的那份覆盖掉可用的那份，游戏会在
+# 字体初始化阶段再次挂掉 -- 在窗口和第一帧之后，所以看起来像
+# 别的东西的回归。
 NATIVES = {
     "libarcarm64.so":             "db9d78b196beaa237a153b622b781e06be973462",
     "libarc-filedialogsarm64.so": "0ac27bdfd455ed1190ff9ba0ce97c7ddeb0cc049",

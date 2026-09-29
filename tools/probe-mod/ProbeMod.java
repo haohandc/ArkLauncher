@@ -3,29 +3,29 @@ package probe;
 import mindustry.mod.Mod;
 
 /**
- * The smallest mod that can PROVE the loader works.
+ * 能【证明】加载器可用性的最小 mod。
  *
- * WHY THIS EXISTS
- *   Mindustry's mod support has never run on this platform, and the open
- *   question is narrow: can a class loaded at runtime out of a mod jar be
- *   defined and executed under this JVM? Everything else about mods -- the
- *   directory scan, the content parser, the lifecycle -- is stock Mindustry.
+ * 为什么存在这个
+ *   Mindustry 的 mod 支持从没在这个平台上跑起来过，而眼下悬着的
+ *   问题很窄：从 mod jar 里在运行时加载的类，能否在这个 JVM 下
+ *   被定义并执行？mod 的其它一切 —— 目录扫描、内容解析器、
+ *   生命周期 —— 都是 Mindustry 原装的。
  *
- * WHY IT LOGS INSTEAD OF ADDING CONTENT
- *   This project already has a rule about exactly this: "it appears in the mod
- *   list" is NOT the same as "it actually took effect". A log line cannot be
- *   produced by anything except this class body executing, so it proves BOTH
- *   that the class was defined AND that its lifecycle methods were called.
- *   A mod that merely shows up in a list proves neither.
+ * 为什么是打日志，而不是添加内容
+ *   本项目对这件事已经有规矩：「出现在 mod 列表里」
+ *   与「它真的生效了」不是一回事。一行日志不可能
+ *   由本类体执行之外的任何东西产生，所以它同时证明了两件事：
+ *   这个类被定义了，且它的生命周期方法被调用了。
+ *   只是出现在列表里的 mod，两样都证明不了。
  *
- *   The two markers are deliberately distinct so a partial result is still
- *   informative: init() runs before content loading, loadContent() during it.
- *   Seeing only the first would mean class loading works but the content phase
- *   does not.
+ *   两个标记刻意区分开，这样即使只拿到一半结果也仍有
+ *   信息量：init() 在内容加载之前跑，loadContent() 在加载过程中跑。
+ *   只见到第一个，就意味着类加载能工作、而内容阶段
+ *   不能。
  *
- * Pure ASCII on purpose: this project has been bitten twice by clang decoding
- * a source file as GBK on a Chinese Windows console. javac is not clang, but
- * there is no reason to find out the hard way.
+ * 刻意保持纯 ASCII：本项目已经被 clang 在中文 Windows 控制台上
+ * 把源文件按 GBK 解码坑过两次。javac 不是 clang，但
+ * 没理由非得亲自撞一次才信。
  */
 public class ProbeMod extends Mod {
 

@@ -69,77 +69,77 @@ except ImportError:
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# The hand-made source, in the repository so this script runs on a fresh clone.
-# It used to reach into MindustryArkDocs, a sibling directory that is deliberately
-# not versioned -- which meant nobody else could reproduce the icon.
+# 手工原画，放在仓库里，这样脚本在全新 clone 上也能跑。
+# 它以前会去读 MindustryArkDocs，那是刻意不做版本管理的同级目录，
+# 结果就是别人谁也没法复现这个图标。
 SOURCE = os.path.join(PROJECT_ROOT, "assets", "icon_64.png")
 
 SOURCE_SHA256 = "35bc7bd8092c3c6ca19fe0aeabd99a8798126a90be7e2fe70493fc39d53e2539"
 
-# ⚠️ WHY THE CROP IS OFFSET BY ONE PIXEL, AND WHY IT LOOKS LIKE A BUG
+# ⚠️ 裁剪为何偏移一个像素，以及为何它看起来像 bug
 #
-#     The artwork's opaque area is (6,6)-(57,57), i.e. 52x52 whose geometric
-#     centre is 31.5. But the DRAWING inside it is not centred on that: measured
-#     by the four bolts, whose mirror axis is at 32.5 -- a full pixel right and
-#     down. The user saw the result as "the bolts are not symmetric any more",
-#     and they were right to: on the device that offset is 19px at 1024 and about
-#     one pixel at the 64px the icon is actually drawn at.
+#     原画的不透明区域是 (6,6)-(57,57)，即 52x52，其几何
+#     中心是 31.5。但里面画的内容并不以它为居中：按四个
+#     螺栓量，它们的镜像轴在 32.5 —— 整整偏右、偏下
+#     一个像素。用户看到结果后说“螺栓不再对称了”，
+#     他说得对：在设备上这偏移在 1024 时是 19px，在图标实际
+#     绘制的 64px 下约一个像素。
 #
-#     Cropping (6,6,58,58) keeps that error. Cropping (7,7,59,59) puts the
-#     window's centre exactly on the drawing's axis -- residual 0.00px -- at the
-#     cost of one transparent pixel column/row on the right and bottom, because
-#     the window now reaches one past the opaque area. That strip is 19px at 1024
-#     and sits where the system mask cuts anyway, so it costs nothing visible.
+#     裁 (6,6,58,58) 会保留这个误差。裁 (7,7,59,59) 则把
+#     窗口中心正好落在画面的轴上 —— 残差 0.00px —— 代价是
+#     右侧和底部各多出一条透明像素列/行，因为窗口现在
+#     越过了不透明区域一个像素。那一条在 1024 时是 19px，
+#     而且正好在系统遮罩会裁掉的位置，所以视觉上没有代价。
 #
-#     Measured, both offsets, by the bolt mirror axis:
-#         crop (6,6,58,58)  axis 26.50 in a 52 window (centre 25.5)  off by +1.00
-#         crop (7,7,59,59)  axis 25.50                              off by  0.00
+#     按螺栓镜像轴实测两种偏移：
+#         crop (6,6,58,58)  轴 26.50，52 窗口内（中心 25.5）  偏 +1.00
+#         crop (7,7,59,59)  轴 25.50                              偏  0.00
 #
-#     ⚠️ This is a property of the ARTWORK, not of this script: icon2 and icon3
-#     have the same +1 offset. If the source is ever redrawn with the drawing
-#     centred on its own bounds, this crop must go back to (6,6,58,58) --
-#     otherwise it would INTRODUCE the very error it exists to remove.
+#     ⚠️ 这是原画本身的属性，不是脚本的问题：icon2 和 icon3
+#     也有同样的 +1 偏移。如果以后重画原画、让画面
+#     在自身边界内居中，这个裁剪必须改回 (6,6,58,58) ——
+#     否则就会引入它本就是要消除的那个误差。
 
-CROP = (7, 7, 59, 59)     # 52x52 -- see the note below on why it is not (6,6,58,58)
+CROP = (7, 7, 59, 59)     # 52x52 —— 为何不是 (6,6,58,58)，见下方注释
 CANVAS = 1024
-UPSCALE = 19              # integer: 52 x 19 = 988
+UPSCALE = 19              # 整数：52 x 19 = 988
 MARGIN = (CANVAS - 52 * UPSCALE) // 2      # 18
 
-# The artwork's own outer blue, measured (most common colour in the outer band).
+# 原画自身的外圈蓝，实测得出（外圈里最常用的颜色）。
 BACKGROUND = (161, 197, 239, 255)
 
-# A dark edge on the background layer.
+# 背景层上的一条深色边。
 #
-# WHY IT IS NEEDED AT ALL
-#     The artwork is a 52x52 SQUARE, and the system puts its own rounded mask on
-#     top. Where the mask's corner curves inside the square, the background shows
-#     through -- and because the background was a flat light blue, that read as
-#     four pale wedges poking out of a dark grey icon. The user's words: it looks
-#     wrong at large sizes. Painting the edge of the background layer dark fills
-#     exactly those wedges, and the mask's curve turns the edge into a continuous
-#     outline around the icon.
+# 为什么非要它不可
+#     原画是 52x52 的正方形，系统会在上面套自己的圆角遮罩。
+#     遮罩的角在方形内弯的地方，背景就会露出来 —— 而背景
+#     原本是平铺的浅蓝，于是看起来就像四个浅色楔形从
+#     深灰图标里戳出来。用户的原话：大尺寸下看起来
+#     不对。把背景层的边缘涂成深色，正好填掉
+#     那些楔形，遮罩的弧线又把这条边变成围绕图标的
+#     连续轮廓。
 #
-# WHY 19, AND WHY THE COLOUR
-#     19 is the upscale factor, so the border is exactly one source pixel wide --
-#     the same unit the artwork is drawn in, which keeps it consistent with the
-#     art rather than with the canvas. The colour is the artwork's own bolt
-#     colour (64,64,73), measured, so the two darks agree instead of merely
-#     being close.
+# 为什么是 19，为什么是这个颜色
+#     19 是放大倍数，所以边框正好一个源像素宽 ——
+#     与原画绘制所用单位一致，这样它与画作一致，
+#     而不是与画布一致。颜色取自原画自己的螺栓
+#     颜色 (64,64,73)，实测得出，这样两处深色是相同而不是
+#     仅仅相近。
 #
-# Set WIDTH to 0 to get the previous flat background back.
+# 把 WIDTH 设为 0 即可恢复之前的平铺背景。
 EDGE_COLOR = (64, 64, 73, 255)
 #
-# ⚠️ 19 -- one source pixel -- was tried first and the user reported it "cannot
-# be seen at all". They were right, and the reason is worth keeping: this is a
-# 1024px asset that is DISPLAYED at about 64px, so 19px is 19/1024*64 = 1.2px on
-# screen, and it sits at the very edge where the mask eats it. The width was
-# chosen by looking at a 250px preview, which is a size the icon never appears
-# at. Compare border widths at 64px, not at preview size.
-EDGE_WIDTH = 0            # off -- the user's call 2026-09-25: no border, just the artwork
+# ⚠️ 先试的是 19 —— 一个源像素 —— 用户反馈“根本
+# 看不见”。他说得对，原因值得记下来：这是一个
+# 1024px 的资源，实际显示在约 64px，所以 19px 在屏幕上
+# 是 19/1024*64 = 1.2px，而且就在遮罩会吃掉的最边上。
+# 这个宽度是看着 250px 预览选出来的，而图标从不会
+# 以那个尺寸出现。比较边框宽度要在 64px 下比，不是在预览尺寸下。
+EDGE_WIDTH = 0            # 关闭 —— 用户 2026-09-25 决定：不要边框，只用原画
 
-# name -> (size, is the flat background, is the artwork)
-# Copied from the existing set: AppScope carries the layered pair and the six
-# density buckets, entry/ carries its own copy of the pair plus startIcon.
+# name -> (size, 是否为平铺背景, 是否为原画层)
+# 照抄现有图标集：AppScope 带分层的那一对和六个
+# 密度档，entry/ 带自己那份分层对加上 startIcon。
 OUTPUTS = [
     ("AppScope/resources/base/media/background.png", 1024, "background"),
     ("AppScope/resources/base/media/foreground.png", 1024, "foreground"),
@@ -173,9 +173,9 @@ def build_layers():
         sys.exit("!! source artwork not found:\n   %s\n"
                  "   Expected in the repository at assets/icon_64.png." % SOURCE)
 
-    # The gate is on the BYTES, not the path: the earlier revisions of this
-    # artwork have the same shape and differ mainly in colour, so a path alone
-    # would not notice the wrong file.
+    # 校验卡的是字节，不是路径：这个原画的早期修订版
+    # 形状相同、主要只是颜色不同，所以光看路径
+    # 发现不了拿错文件。
     got = sha256f(SOURCE)
     if SOURCE_SHA256 and got != SOURCE_SHA256:
         sys.exit("!! the source artwork changed\n"
@@ -194,9 +194,9 @@ def build_layers():
 
     bg_layer = Image.new("RGBA", (CANVAS, CANVAS), BACKGROUND)
     if EDGE_WIDTH > 0:
-        # A plain rectangle outline, NOT a rounded one: the background must not
-        # carry a shape of its own. This is an inset frame, and it is the
-        # system's mask that rounds it off on the device.
+        # 普通矩形描边，不是圆角：背景本身不能
+        # 自带形状。这是一个内缩的边框，在设备上把它
+        # 弄圆的是系统的遮罩。
         ImageDraw.Draw(bg_layer).rectangle(
             [0, 0, CANVAS - 1, CANVAS - 1], outline=EDGE_COLOR, width=EDGE_WIDTH)
     return bg_layer, fg_layer
@@ -209,10 +209,10 @@ def main():
     composite = bg_layer.copy()
     composite.alpha_composite(fg_layer)
 
-    # The bottom edge of the source is a hair lighter than the rest of the band
-    # in the artwork; compositing the whole square means that shows as a faint
-    # line on the small sizes. Nothing to do about it here -- noted so that if it
-    # is ever visible on a device, the cause is known.
+    # 原画底边比色带的其余部分略浅一点；合成整个方形
+    # 意味着这会在小尺寸上显示成一条淡淡的
+    # 线。这里没什么可做的 —— 记下来是为了万一它在
+    # 设备上可见，原因已知。
     for rel, size, kind in OUTPUTS:
         full = os.path.join(PROJECT_ROOT, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)

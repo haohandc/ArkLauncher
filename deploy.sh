@@ -1,108 +1,108 @@
 #!/bin/bash
-# build -> verify -> install -> launch -> collect log
+# 构建 -> 校验 -> 安装 -> 启动 -> 收集日志
 #
-# WHY THIS IS A SCRIPT AND NOT THREE TYPED COMMANDS
-#   Each step here exists because skipping it once produced a wrong result that
-#   looked like a code problem. Chained, they cannot be forgotten.
+# 为什么这是一个脚本，而不是三条手敲的命令
+#   这里每一步都有存在的理由：曾经跳过其中一步，得到的错误结果
+#   看着像代码问题。串成一条链，就不会被漏掉。
 #
-# THIS INSTALLS *YOUR OWN* BUILD, SIGNED WITH *YOUR OWN* CERTIFICATE
-#   The HAP this installs is signed by DevEco with an automatically generated
-#   debug profile, and a debug profile names the device UDIDs it is valid for
-#   (up to 100, registered in AppGallery Connect). So this build works on the
-#   machines whose UDIDs are in that profile and nowhere else -- which is fine
-#   here, because this is the local development loop, and it is why the signed
-#   HAP is NOT the thing to hand to other people. See RELEASE.md for what to
-#   distribute instead.
+# 这里安装的是 *你自己* 的构建，用 *你自己的* 证书签名
+#   安装的 HAP 由 DevEco 用自动生成的调试配置文件签名。
+#   调试配置文件会列出它适用的设备 UDID（最多 100 个，
+#   注册于 AppGallery Connect）。所以这个构建只在 UDID
+#   在该配置文件中的机器上生效，别的机器都不行 —— 这没问题，
+#   因为这里是本地开发循环，也正是因此，签名后的 HAP
+#   不是能交给别人的东西。
+#   该分发什么，见 RELEASE.md。
 #
-# NO ACL RE-SIGNING
-#   This used to re-sign the HAP with a special profile from AGC, because
-#   module.json5 requested the restricted permission
-#   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY, which an ordinary
-#   profile cannot grant -- the install failed with
-#   "install failed due to grant request permissions failed".
+# 不再做 ACL 重签名
+#   以前会用 AGC 的特殊配置文件给 HAP 重签名，因为
+#   module.json5 申请了受限权限
+#   ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY，而普通
+#   配置文件给不了 —— 安装会失败并报
+#   "install failed due to grant request permissions failed"。
 #
-#   That permission has since been REMOVED, and verified unnecessary -- FOR THE
-#   LOCAL DEV LOOP. The game runs to its main menu without it. The JDK ships in
-#   the HAP's own lib area, which is already executable, and the sandbox only
-#   holds DATA (the module image is opened by java.base as a file).
+#   该权限后来已被移除，并验证过确实不必要 —— 仅限
+#   本地开发循环。没有它游戏也能跑到主菜单。JDK 放在
+#   HAP 自己的 lib 目录里，那里本来就是可执行的，而沙箱只
+#   存放数据（模块镜像由 java.base 当普通文件打开）。
 #
-#   ⚠️ "Executable memory at runtime comes from anonymous mappings, which this
-#   platform permits regardless" is TRUE ON THIS MACHINE and was measured as
-#   such. It is NOT true in general. Measured 2026-09-22 on a HarmonyOS 6.1.1
-#   (API 24) device running the AppGallery package:
+#   ⚠️ "运行时的可执行内存来自匿名映射，本平台无论如何都允许"
+#   这句话在本机上是成立的，并且是实测出来的。
+#   但它并非普遍成立。2026-09-22 在一台 HarmonyOS 6.1.1
+#   （API 24）设备上实测，运行的是 AppGallery 包：
 #
 #       !! mmap(RWX) FAILED: errno=22 (Invalid argument)
 #
-#   Without anonymous executable memory the JVM's JIT cannot start, and the
-#   process stops dead inside JNI_CreateJavaVM. That is the "启动即闪退" the
-#   store reviewer reported. The permission we removed here,
-#   ALLOW_WRITABLE_CODE_MEMORY, exists for exactly this -- our own launcher.c
-#   says "the permission covers anonymous executable memory only".
+#   没有匿名可执行内存，JVM 的 JIT 就无法启动，
+#   进程会死在 JNI_CreateJavaVM 里面。这就是商店审核员
+#   反馈的 "启动即闪退"。我们在这里移除的那个权限，
+#   ALLOW_WRITABLE_CODE_MEMORY，正是为此存在 —— 我们自己的
+#   launcher.c 里写着 "the permission covers anonymous executable memory only"。
 #
-#   What makes the local build different is that it is DEBUG-SIGNED, and this
-#   machine is HarmonyOS 7. Whether the deciding factor is the signing or the
-#   platform version is NOT YET SEPARATED -- see RELEASE-MAINTENANCE.md 2.11.
-#   For the STORE build the objection above does not apply (an ACL-signed store
-#   package is not meant to be sideloaded), so requesting it is a candidate.
+#   本地构建之所以不同，是因为它是 DEBUG 签名的，而这台
+#   机器是 HarmonyOS 7。决定因素到底是签名还是
+#   平台版本，目前还没有分离开 —— 见 RELEASE-MAINTENANCE.md 2.11。
+#   对商店版构建来说上面的顾虑不成立（ACL 签名的商店
+#   包本来就不是用来侧载的），所以申请它是候选方案。
 #
-#   ⚠️ That is about ONE permission. The other one this app declares,
-#   ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY, DOES have to go through the
-#   ACL route -- but only for an AppGallery upload, which this script does not
-#   do. A debug profile is not checked that way, so nothing here changes.
-#   See docs/BUILDING.md, 'ACL (restricted permissions)'.
+#   ⚠️ 上面说的只是一个权限。本应用声明的另一个权限，
+#   ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY，确实必须走
+#   ACL 流程 —— 但仅限 AppGallery 上传，而本脚本不做这件事。
+#   调试配置文件不走那种检查，所以这里没有任何变化。
+#   见 docs/BUILDING.md 的 'ACL (restricted permissions)'。
 #
-#   So the ordinary signing config in build-profile.json5 is enough, and this
-#   script installs what hvigor signed. Set that config up once with
+#   所以 build-profile.json5 里的普通签名配置就够了，本脚本
+#   安装的就是 hvigor 签出来的东西。配置只需设置一次：
 #   DevEco: File -> Project Structure -> Signing Configs -> Automatically
 #   generate signature.
 #
-# PATHS
-#   ARK_DEVECO_STUDIO, DEVECO_SDK_HOME, ARK_PYTHON -- see build.sh and
-#   scripts/config.py. Nothing here is fixed to one machine any more.
+# 路径
+#   ARK_DEVECO_STUDIO、DEVECO_SDK_HOME、ARK_PYTHON —— 见 build.sh 和
+#   scripts/config.py。这里不再固定绑定到某一台机器。
 #
-# Usage:
-#   bash deploy.sh              # build + verify + install + launch + log
-#   bash deploy.sh --no-build   # reuse the existing HAP
+# 用法：
+#   bash deploy.sh              # 构建 + 校验 + 安装 + 启动 + 日志
+#   bash deploy.sh --no-build   # 复用已有的 HAP
 
 set -o pipefail
 cd "$(dirname "$0")" || exit 1
 
 export MSYS_NO_PATHCONV=1
 
-# Bundle name is also in scripts/config.py; keep the two in step.
+# Bundle 名也在 scripts/config.py 里；两处要保持一致。
 BUNDLE="com.haohandc.mindustryark"
 ABILITY="EntryAbility"
 
 STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"
 SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"
 
-# Arrays, per the note in build.sh: these paths contain spaces.
+# 用数组，理由见 build.sh 里的说明：这些路径含空格。
 HDC=("$SDK_HOME/default/openharmony/toolchains/hdc.exe")
 PY=("${ARK_PYTHON:-python}")
 
 # ---------------------------------------------------------------------------
-# WHICH DEVICE
+# 选哪台设备
 #
-# Bare `hdc` calls pick a device themselves when more than one is attached, and
-# this script runs `uninstall` -- so guessing can erase the save data of a device
-# nobody meant to touch. The target is therefore resolved once, here, and every
-# call below goes through hdc() which states it.
+# 裸的 `hdc` 调用在连着多台设备时会自己挑一台，而本脚本
+# 会执行 `uninstall` —— 所以猜错就会抹掉一台设备上
+# 本不该动的存档数据。因此目标设备只在这里解析一次，下面
+# 每次调用都经过 hdc()，由它显式声明目标。
 #
-# With one device attached nothing changes. With several, or none, this stops and
-# says which ones it can see rather than choosing.
+# 只连一台设备时行为不变。有多台或一台都没有时，脚本会停下，
+# 列出它能看到的设备，而不是替你猜。
 #
-# Override with ARK_HDC_TARGET=<id from 'hdc list targets'>.
+# 可用 ARK_HDC_TARGET=<id from 'hdc list targets'> 覆盖。
 # ---------------------------------------------------------------------------
 HDC_TARGET="${ARK_HDC_TARGET:-}"
 if [ -z "$HDC_TARGET" ]; then
-    # The tool has to be checked BEFORE it is used, not after.
+    # 工具必须在被使用之前检查，而不是之后。
     #
-    # `2>/dev/null` on the line below means "hdc could not be run" and "hdc ran
-    # and saw nothing" both arrive here as empty output -- and empty output is
-    # the no-device branch, whose message sends the reader to check a cable that
-    # was never the problem. The check for this file existed, but further down,
-    # so the misleading message came first. Reproduced by pointing HDC at a
-    # path that does not exist.
+    # 下面这行的 `2>/dev/null` 会让 "hdc 跑不起来" 和 "hdc 跑了
+    # 但什么都没看到" 都变成空输出 —— 而空输出对应的是
+    # 无设备分支，它的提示会让人去查一根根本不是问题所在的
+    # 数据线。对这个文件的检查本来就有，但位置更靠后，
+    # 所以先出现的是那条误导性提示。把 HDC 指向一个不存在的
+    # 路径就能复现。
     [ -f "${HDC[0]}" ] || {
         echo "!! hdc not found: ${HDC[0]}" >&2
         echo "!! set ARK_DEVECO_STUDIO, or DEVECO_SDK_HOME, to the right SDK" >&2
@@ -125,41 +125,41 @@ if [ -z "$HDC_TARGET" ]; then
 fi
 echo "device: $HDC_TARGET"
 
-# Every device call goes through this, so the target is stated exactly once.
+# 每次设备调用都经过这里，目标设备只声明一次。
 hdc() { "${HDC[@]}" -t "$HDC_TARGET" "$@"; }
 
 
 OUT_DIR="entry/build/default/outputs/default"
-# Matches targets[].output.artifactName in entry/build-profile.json5 -- bump the
-# two together, with versionName in AppScope/app.json5. verify_hap.py checks
-# that all three agree.
+# 与 entry/build-profile.json5 里的 targets[].output.artifactName 对应 ——
+# 两处要一起改，还要带上 AppScope/app.json5 里的 versionName。
+# verify_hap.py 会检查这三者是否一致。
 #
-# NOTE the asymmetry, which is hvigor's and not a typo here: with an
-# artifactName of X it writes X.hap SIGNED and X-unsigned.hap unsigned. Measured
-# -- the default entry-default-signed.hap name only appears because the default
-# artifactName has no version in it.
+# 注意这个不对称，这是 hvigor 的行为，不是这里的笔误：当
+# artifactName 为 X 时，它写出签名的 X.hap 和未签名的 X-unsigned.hap。
+# 实测 —— 默认的 entry-default-signed.hap 这个名字之所以出现，
+# 只是因为默认的 artifactName 里不带版本号。
 #
-# The signed one is for THIS machine only (see the top of this file) and is not
-# a release artifact. What gets published is the unsigned HAP, plus the payload
-# zip -- see RELEASE.md.
+# 签名版只给本机用（见本文件开头），它不是发布产物。
+# 实际发布出去的是未签名 HAP，外加 payload
+# zip —— 见 RELEASE.md。
 for f in "${HDC[0]}"; do
     [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
 done
 command -v "${PY[0]}" >/dev/null 2>&1 || [ -f "${PY[0]}" ] || {
     echo "python not found: ${PY[0]} (set ARK_PYTHON)" >&2; exit 1; }
 
-# The HAP's name is ASKED FOR, not written down here.
+# HAP 的名字是问出来的，不是在这里写死的。
 #
-# It used to be a fourth hand-kept copy of the version, and it went stale exactly
-# as that predicts: at the v0.1.0-beta1 -> v0.2.0-beta.1 bump this line was not
-# touched, so the script looked for a file that no longer existed and stopped at
-# "no unsigned hap". verify_hap.py's docstring already names this file as one of
-# the places that carry the version, but nothing ever checked it.
+# 它以前是版本号的第四份手工维护副本，结果正如预料地过期了：
+# 在 v0.1.0-beta1 -> v0.2.0-beta.1 这次升级时，这一行没被改，
+# 于是脚本去找一个已经不存在的文件，并停在
+# "no unsigned hap"。verify_hap.py 的文档字符串早就把这个文件
+# 列为携带版本号的位置之一，但从来没人检查过它。
 #
-# scripts/config.py derives the name (ARTIFACT_NAME), so deriving it here removes
-# the copy instead of remembering to update it. `|| exit` and the emptiness test
-# are both load-bearing: an empty HAP_BASE would become a search for
-# "-unsigned.hap", which reads as a missing build rather than as this failure.
+# scripts/config.py 能推导出这个名字（ARTIFACT_NAME），在这里推导
+# 等于去掉那份副本，而不用靠记性去更新它。`|| exit` 和空值检查
+# 都是关键：HAP_BASE 为空会让脚本去找
+# "-unsigned.hap"，那看起来像缺构建，而不是这里的这个失败。
 HAP_BASE="$("${PY[@]}" -c 'import sys; sys.path.insert(0, "scripts"); import config; sys.stdout.write(config.ARTIFACT_NAME)')" || exit 1
 [ -n "$HAP_BASE" ] || {
     echo "!! could not read ARTIFACT_NAME from scripts/config.py" >&2; exit 1; }
@@ -168,19 +168,19 @@ SIGNED="$OUT_DIR/$HAP_BASE.hap"
 
 if [ "$1" != "--no-build" ]; then
     echo "############ 0/4 check inputs ############"
-    # Cheap, and it turns "25 minutes into the build, one input missing" into an
-    # immediate, named failure.
+    # 代价很低，却能把 "构建跑到 25 分钟才发现少了一个输入" 变成
+    # 立即抛出的、指名道姓的失败。
     "${PY[@]}" scripts/config.py | sed 's/^/  /'
 
     echo
     echo "############ 1/4 build ############"
 
-    # GATE: hvigor's native step reports success even when it decides the CMake
-    # output is up to date, and it has done exactly that while a source file was
-    # NEWER than the object -- so the edit silently never reached the binary and
-    # the device kept running the previous build. That failure mode is invisible
-    # from the outside: the build says SUCCESSFUL and the on-device log looks like
-    # a fresh run. Compare timestamps ourselves and force a rebuild if stale.
+    # 闸门：hvigor 的原生步骤即使判定 CMake 输出是最新的，也照样
+    # 报成功，而它确实这么干过：某个源文件比 .o 还新，
+    # 于是那次改动悄悄没进二进制，
+    # 设备一直跑着上一次的构建。这种故障模式从外面看不出来：
+    # 构建显示 SUCCESSFUL，设备上的日志看起来像
+    # 一次全新运行。我们自己比较时间戳，过期就强制重建。
     OBJ="entry/build/default/intermediates/cmake/default/obj/arm64-v8a/libmain.so"
     STALE=""
     if [ -f "$OBJ" ]; then
@@ -197,15 +197,15 @@ if [ "$1" != "--no-build" ]; then
         rm -rf entry/build/default/intermediates/cmake/default/obj
     fi
 
-    # Remove the previous packages FIRST. Without this a failed build leaves the
-    # old HAP in place, every later step succeeds on it, and the device silently
-    # receives the PREVIOUS build -- which is precisely what happened here twice.
-    # "The file is there" is not evidence that it is this build's file.
+    # 先删掉之前的包。否则构建失败会留下旧的
+    # HAP，后面每一步都基于它成功，设备就悄悄拿到
+    # 了上一次的构建 —— 这正是这里发生过两次的事。
+    # "文件在那" 并不能证明它就是这次构建的文件。
     rm -f "$UNSIGNED" "$SIGNED"
 
-    # No "|| true" and no grep-away of the exit status: if the build fails, stop.
-    # Swallowing the status is how 3 compile errors in launcher.c went unnoticed
-    # while the deploy reported success and installed a stale HAP.
+    # 不加 "|| true"，也不用 grep 绕掉退出码：构建失败就停。
+    # 吞掉状态码，正是 launcher.c 里 3 个编译错误没被发现的
+    # 原因 —— 部署还报成功，并安装了过期的 HAP。
     build_log="$(mktemp)"
     if ! ./build.sh assembleHap >"$build_log" 2>&1; then
         echo "!! BUILD FAILED -- showing errors" >&2
@@ -223,7 +223,7 @@ if [ "$1" != "--no-build" ]; then
         exit 1
     }
 
-    # same gate, after the fact: prove the artifact is newer than the source now
+    # 同一道闸门的事后检查：证明产物现在确实比源文件新
     if [ -f "$OBJ" ]; then
         for src in entry/src/main/cpp/*.c entry/src/main/cpp/*.h; do
             [ -f "$src" ] || continue
@@ -243,9 +243,9 @@ PYTHONIOENCODING=utf-8 "${PY[@]}" scripts/scan_needed.py || exit 1
 
 echo
 echo "############ 3/4 install ############"
-# Prefer the signed HAP. hvigor only writes one if build-profile.json5 has a
-# signing config -- without it there is nothing installable, and saying so here
-# is far clearer than an install error about an invalid package.
+# 优先用签名的 HAP。只有 build-profile.json5 里配了签名配置，
+# hvigor 才会写出签名版 —— 没有它就没有可安装的东西，在这里
+# 说明白，远比一个"包无效"的安装错误清楚。
 if [ ! -f "$SIGNED" ]; then
     echo "!! no signed HAP at $SIGNED" >&2
     echo "!! set up signing once: DevEco -> File -> Project Structure ->" >&2
@@ -253,19 +253,19 @@ if [ ! -f "$SIGNED" ]; then
     exit 1
 fi
 hdc uninstall "$BUNDLE" >/dev/null 2>&1
-# Install, and actually check that it happened.
+# 安装，并真正检查它确实发生了。
 #
-# The previous form was `install -r "$SIGNED" 2>&1 | tail -3`, which masked a
-# failure twice over: a pipeline's status is tail's and never hdc's, and keeping
-# only the last three lines discards a one-line error outright. Measured
-# consequence: two runs printed `[Fail]ExecuteCommand need connect-key` and then
-# carried on to launch an app that was not installed, while looking for all the
-# world like a successful deploy.
+# 之前的写法是 `install -r "$SIGNED" 2>&1 | tail -3`，它把失败
+# 掩盖了两次：管道的状态码是 tail 的，永远不是 hdc 的；而且只保留
+# 最后三行会把只有一行的错误直接丢掉。实测
+# 后果：两次运行打印了 `[Fail]ExecuteCommand need connect-key`，然后
+# 继续去启动一个根本没装上的应用，而从各方面看都
+# 像一次成功的部署。
 #
-# The success string is matched positively because a negative check ("no [Fail]")
-# cannot tell a failed install from an hdc that printed nothing at all. The exact
-# wording is what this hdc emits; a different one would show up as a loud refusal
-# rather than as a silent stale install, which is the trade we want.
+# 这里正向匹配成功字符串，因为反向检查（"没有 [Fail]"）
+# 分不清安装失败和 hdc 什么都没打印。这里的
+# 措辞就是这个 hdc 实际输出的；换一种措辞会表现为响亮的
+# 拒绝，而不是悄悄装了个旧的，这正是我们想要的取舍。
 INSTALL_OUT="$(hdc install -r "$SIGNED" 2>&1)"
 printf '%s\n' "$INSTALL_OUT" | tail -3
 if ! printf '%s' "$INSTALL_OUT" | grep -q "install bundle successfully"; then
@@ -276,24 +276,24 @@ fi
 
 echo
 echo "############ 4/4 launch + collect ############"
-# hilog throttles and drops lines when a failing probe loop repeats the same
-# message many times, which is exactly when we most need the full text. The app
-# already mirrors stdout/stderr into its own sandbox (redirect_io), and that
-# directory IS readable over hdc -- so read the file instead of the log buffer.
+# 当失败的探测循环反复输出同一条消息时，hilog 会限流并丢行，
+# 而那正是我们最需要完整文本的时候。应用
+# 已经把 stdout/stderr 镜像进自己的沙箱（redirect_io），那个
+# 目录通过 hdc 是可读的 —— 所以读文件，别读日志缓冲区。
 #
-# NOTE: hdc cannot WRITE into the sandbox, so these logs cannot be cleared from
-# here. stdout.log is truncated by the app itself at startup; stderr.log is not,
-# so treat it as append-only across runs when reading it after this.
+# 注意：hdc 无法往沙箱里写，所以这些日志没法从这里
+# 清掉。stdout.log 由应用自己在启动时截断；stderr.log 不会，
+# 所以之后读它时要当成跨多次运行只追加的文件。
 LOG="/data/app/el2/100/base/$BUNDLE/files/stderr.log"
 hdc shell hilog -r >/dev/null 2>&1
 hdc shell "aa force-stop $BUNDLE" >/dev/null 2>&1
 sleep 2
 START_OUT="$(hdc shell "aa start -a $ABILITY -b $BUNDLE" 2>&1)"
 printf '%s\n' "$START_OUT" | tail -2
-# Same masking as the install above. A failed launch here used to be discovered
-# only by noticing that the logs below were empty -- which reads as "the app
-# crashed on startup", a completely different problem, and one this project has
-# already chased once.
+# 和上面的安装一样的掩盖问题。这里启动失败以前只能靠
+# 注意到下面的日志是空的才发现 —— 而那读起来像 "应用
+# 启动时崩溃了"，完全是另一个问题，而且是本项目
+# 已经追过一次的问题。
 if ! printf '%s' "$START_OUT" | grep -q "start ability successfully"; then
     echo "!! launch did not report success -- the logs below will be empty" >&2
 fi

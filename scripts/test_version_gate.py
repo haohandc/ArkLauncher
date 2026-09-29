@@ -23,25 +23,25 @@ WHY A TEST FOR A CHECK
 WHEN TO RUN IT
     After touching the version fields, and after touching that gate.
 """
-# Negative test for the version gate.
+# 版本关卡的负面测试。
 #
-# Builds minimal .hap files (a zip holding nothing but pack.info) with the
-# version fields tampered, then runs the REAL gate function from verify_hap.py
-# against each one. A gate that has never been shown to fail is not yet known to
-# be a gate -- this project has already shipped one check that always printed OK
-# because the pipeline's exit status was being discarded.
+# 构造最小的 .hap 文件（只含 pack.info 的 zip），篡改
+# 版本字段，然后对每一个运行 verify_hap.py 里真正的关卡
+# 函数。从未被证明会失败的关卡还不能算
+# 关卡 -- 这个项目已经发布过一个总是打印 OK 的检查，
+# 因为流水线的退出状态被丢弃了。
 import io
 import json
 import os
 import sys
 import zipfile
 
-# Derived from this file's own location, not written down. It used to be a
-# literal absolute path to one particular checkout, which is the one thing every
-# other script in here deliberately avoids -- they all route through config.py,
-# whose paths are ARK_*-overridable defaults. The literal meant a checkout
-# anywhere else failed with a confusing ImportError, and the repository carried
-# a path belonging to one machine for no reason.
+# 由本文件自身的位置推导，而非写死。它以前是指向某个
+# 特定 checkout 的字面绝对路径，而这是这里其他所有脚本都
+# 刻意避免的一件事 -- 它们全都经由 config.py 路由，
+# 后者的路径是可被 ARK_* 覆盖的默认值。那个字面量意味着
+# 在其他任何地方 checkout 都会以令人困惑的 ImportError 失败，而且仓库
+# 无缘无故带着一个属于某台机器的路径。
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(HERE, "scripts"))
 os.chdir(HERE)
@@ -70,7 +70,7 @@ def make_hap(path, info):
 
 
 def run_case(label, filename, patch, expect_fail):
-    info = json.loads(json.dumps(GOOD))          # deep copy
+    info = json.loads(json.dumps(GOOD))          # 深拷贝
     patch(info)
     p = make_hap(os.path.join(os.environ["TEMP"], filename), info)
     ok = [True]

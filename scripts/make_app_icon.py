@@ -62,55 +62,55 @@ except ImportError:
           "scripts/make_app_icon.py")
     sys.exit(1)
 
-# The atlas the turret is cut from, pinned so the picture cannot go stale silently.
+# 炮塔所裁剪的图集，用哈希锁定，这样画面不会悄悄过期。
 ATLAS_ENTRY = "sprites/sprites.png"
 ATLAS_SHA1 = "d25dc20c7cfca75df13fad0199ce3c1bb2c3f4e7"
 ATLAS_BYTES = 4303916
 ATLAS_SIZE = (4096, 4096)
-# The atlas's own frame table (sprites/sprites.aatls) places the turret here.
+# 图集自己的帧表 (sprites/sprites.aatls) 把炮塔放在这里。
 TURRET_RECT = (1847, 3060, 1847 + 34, 3060 + 34)
 TURRET_FRAME = "arc"
 
 CANVAS = 1024
-# Integer multiple of the frame's 34px: 20 -> 680px, about 66% of the canvas.
+# 帧尺寸 34px 的整数倍：20 -> 680px，约占画布 66%。
 #
-# Rejected at 16 (too small on a real launcher) and at 22 (so close to the edge that
-# a rounded-square mask, the roundest one in use, cuts the shoulders). 20 is the
-# largest step that still leaves the silhouette clear of every mask shape.
+# 16 时被否决（在真实桌面上太小），22 时也被否决（太贴边，
+# 最圆的那种圆角方形遮罩会切到肩部）。20 是
+# 仍能让轮廓避开所有遮罩形状的最大档。
 SCALE = 20
 
-# Blue background, a slight vertical gradient. Full-bleed: no alpha, no rounding.
+# 蓝色背景，轻微竖向渐变。通版铺满：无透明通道，不做圆角。
 #
-# A white plate was tried and rejected: this turret's body is nearly white, so on
-# white the shape loses its contrast and at 41px only the dark rim is still readable.
-# The platform's own Mindustry icon can sit on a light plate because that turret is
-# warm orange; this one is not.
+# 试过白色底板，被否决：这个炮塔的主体接近白色，
+# 在白底上形状会失去对比，41px 时只剩深色轮廓还能看清。
+# 平台自带的 Mindustry 图标能放在浅色底板上，因为那个炮塔是
+# 暖橙色的；这个不是。
 #
-# Lightness was then tuned by eye against the darkest and lightest ends: too dark and
-# the plate fights the game's own palette, too light and the body blends into it -- at
-# the lightest step the 41px icon was down to just its outline. This is two steps off
-# the first version, the midpoint of the range that stayed readable.
+# 明度随后对着最暗和最亮两端用肉眼调过：太暗，
+# 底板会和游戏自带配色打架；太亮，主体又会融进去 ——
+# 最亮那档下 41px 图标只剩轮廓。这比第一版差了两档，
+# 是可读范围内的中点。
 BG_TOP = (92, 152, 232)
 BG_BOTTOM = (48, 94, 174)
 
-# Every file the app needs, with the size each one must be. Measured from the
-# existing tree: these are the sizes the platform's own template uses per density.
+# 应用需要的每个文件，以及各自必须的尺寸。从现有
+# 目录实测得出：这些就是平台自带模板按密度使用的尺寸。
 TARGETS = [
     ("AppScope/resources/base/media/background.png", 1024, "background"),
     ("AppScope/resources/base/media/foreground.png", 1024, "foreground"),
     ("entry/src/main/resources/base/media/background.png", 1024, "background"),
     ("entry/src/main/resources/base/media/foreground.png", 1024, "foreground"),
     ("entry/src/main/resources/base/media/startIcon.png", 144, "flat"),
-    # The floating ball's glyph: the SAME turret, alone on transparency.
+    # 悬浮球的图样：同一个炮塔，单独放在透明底上。
     #
-    # Not the layered icon and not the composed plate -- the ball is a small dark
-    # circle, and a blue plate inside it would just read as a filled dot. Only the
-    # silhouette goes in.
+    # 不是分层图标，也不是合成底板 —— 那个球是个小的深色
+    # 圆，里面放蓝色底板只会看成实心点。只放
+    # 轮廓。
     #
-    # 204 = 34 x 6, an exact integer multiple, for the same reason as the plate: a
-    # fractional factor makes some pixel blocks a row taller than their neighbours,
-    # which reads as a rendering fault. The ball is around 61vp, i.e. ~183px at the
-    # common 3x density, so this is a slight downscale rather than an upscale.
+    # 204 = 34 x 6，正好整数倍，理由和底板一样：
+    # 分数倍率会让某些像素块比邻居高一行，
+    # 看起来就像渲染故障。球大约 61vp，即常见 3x 密度下
+    # 约 183px，所以这里是略微缩小而不是放大。
     ("entry/src/main/resources/base/media/ball_icon.png", 204, "turret"),
     ("AppScope/resources/phone-sdpi/media/app_icon.png", 41, "flat"),
     ("AppScope/resources/phone-mdpi/media/app_icon.png", 54, "flat"),
@@ -147,8 +147,8 @@ def load_turret():
     if frame.size != (34, 34):
         print("FAIL cropped %dx%d, expected 34x34" % frame.size)
         return None
-    # The turret frame is opaque where it is drawn and transparent around it. If
-    # that stops being true, the crop is no longer the thing this icon is of.
+    # 炮塔帧在画到处不透明，周围透明。如果
+    # 这不再成立，那这个裁剪就不再是这个图标所描绘的东西了。
     bbox = frame.split()[3].getbbox()
     if bbox is None:
         print("FAIL the %s frame is fully transparent -- wrong rect?"
@@ -208,8 +208,8 @@ def main():
     flat = bg.copy()
     flat.alpha_composite(fg)
 
-    # Built lazily: a wrong size should be reported once, clearly, rather than
-    # producing a file of the wrong dimensions.
+    # 惰性构建：尺寸错误应当被清晰地报一次，而不是
+    # 产出一个尺寸错误的文件。
     turret_cache = {}
 
     made = 0

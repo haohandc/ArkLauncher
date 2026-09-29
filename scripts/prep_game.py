@@ -40,23 +40,23 @@ import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
 
-# ⭐ The UPSTREAM release jar, unmodified -- byte for byte what Anuken published.
+# ⭐ 上游发布 jar，未修改 -- 与 Anuken 发布的内容逐字节一致。
 #
-# Changed 2026-09-28. This used to copy the audio-fixed variant, which was the
-# output of build_arc_patch.py -> patch_mindustry.py -> build_variants.py. Under
-# the current architecture none of that is written into the game jar: our Arc
-# changes ship as a separate jar ahead of it on the class path (make_patch_jar.py,
-# PATCH_JAR in launcher.c), and the Arc natives come from the bundle via
-# prep_arc.py. So what goes in the game slot is the pristine jar.
+# 2026-09-28 变更。这里以前复制音频修复过的变体，那是
+# build_arc_patch.py -> patch_mindustry.py -> build_variants.py 的产物。在
+# 当前架构下，这些都不会写进游戏 jar：我们的 Arc
+# 改动作为单独的 jar 在 class path 上排在它前面发布（make_patch_jar.py、
+# launcher.c 里的 PATCH_JAR），而 Arc natives 通过
+# prep_arc.py 来自 bundle。所以放进游戏槽位的就是原始 jar。
 #
-# The hash below therefore identifies an UPSTREAM artifact, which is a stronger
-# statement than it used to be: two SHA-1s and the file-name check all used to
-# point at our own multi-stage output, and a mistake anywhere in that chain
-# produced a different jar that only this constant could have noticed.
+# 因此下面的哈希标识的是一个上游产物，这比过去是更强的
+# 陈述：两个 SHA-1 和文件名检查以前全都
+# 指向我们自己的多阶段输出，链中任何一处出错都会
+# 产生一个只有这个常量才能注意到的不同 jar。
 SRC = config.UPSTREAM_JAR
 
-# Mindustry v8 Build 160.5, the official desktop release. Its version.properties
-# says build=160.5, modifier=release, type=official.
+# Mindustry v8 Build 160.5，官方桌面发布版。它的 version.properties
+# 写着 build=160.5, modifier=release, type=official。
 SRC_SHA1 = "8e0fd5d7dd7828fccff59a693a635948883a704b"
 
 DEST = os.path.join(PROJECT_ROOT,
@@ -105,7 +105,7 @@ def main():
     os.makedirs(os.path.dirname(DEST), exist_ok=True)
     shutil.copyfile(SRC, DEST)
 
-    # Verify what actually landed on disk, not what we intended to write.
+    # 校验实际落盘的内容，而不是我们打算写入的内容。
     if sha1_of(DEST) != SRC_SHA1:
         print("FAIL the copy does not match the source; removing it")
         os.remove(DEST)

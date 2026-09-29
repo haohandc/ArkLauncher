@@ -1,22 +1,22 @@
 #!/bin/bash
-# Run hvigor from git-bash.
+# 从 git-bash 运行 hvigor。
 #
-# WHY THIS SCRIPT EXISTS
-#   hvigorw.bat lives under a path containing spaces, and calling it directly
-#   from git-bash keeps tripping over quoting -- "a path with a space in it" has
-#   cost this project several rounds already. So: call node and hvigorw.js
-#   directly, and pass arguments as an ARRAY, which is the only way bash handles
-#   space-containing paths reliably.
+# 为什么需要这个脚本
+#   hvigorw.bat 所在路径含空格，直接从 git-bash 调用它
+#   总在引号上翻车 -- "路径里带空格" 这件事
+#   已经让本项目返工好几轮。所以：直接调用 node 和 hvigorw.js，
+#   参数以 ARRAY 传递，这是 bash 可靠处理
+#   含空格路径的唯一方式。
 #
-# PATHS
-#   Overridable, so a different machine does not have to edit this file. The
-#   same variables are read by scripts/config.py, so one export covers both.
+# 路径
+#   可覆盖，这样换一台机器不必改本文件。
+#   scripts/config.py 读取同样的变量，所以一次导出两边都生效。
 #
-#     ARK_DEVECO_STUDIO   default: E:/Program Files/DevEco Studio
-#     DEVECO_SDK_HOME     default: $ARK_DEVECO_STUDIO/sdk
+#     ARK_DEVECO_STUDIO   默认：E:/Program Files/DevEco Studio
+#     DEVECO_SDK_HOME     默认：$ARK_DEVECO_STUDIO/sdk
 #     ARK_NODE, ARK_HVIGOR
 #
-# Usage:
+# 用法：
 #   bash build.sh assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
 set -o pipefail
 
@@ -25,9 +25,9 @@ cd "$(dirname "$0")" || exit 1
 STUDIO="${ARK_DEVECO_STUDIO:-E:/Program Files/DevEco Studio}"
 export DEVECO_SDK_HOME="${DEVECO_SDK_HOME:-$STUDIO/sdk}"
 
-# Arrays, not plain strings: an unquoted $VAR holding "E:/Program Files/..."
-# gets word-split, the command fails, and the empty pipeline looks like a
-# legitimate "nothing matched" result rather than an error.
+# 用数组而不是普通字符串：未加引号的 $VAR 若装着 "E:/Program Files/..."
+# 会被词分割，命令失败，空管道看起来就像
+# 合法的 "没有匹配" 结果，而不是一个错误。
 NODE=("${ARK_NODE:-$STUDIO/tools/node/node.exe}")
 HVI=("${ARK_HVIGOR:-$STUDIO/tools/hvigor/bin/hvigorw.js}")
 

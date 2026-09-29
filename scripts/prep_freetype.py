@@ -55,8 +55,8 @@ import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
 
-# Arc's own Android build, from the checked-out Arc tree (ARK_ARC_SRC). Its
-# undefined symbols are what make it usable here; see the note above.
+# Arc 自带的 Android 构建，来自检出的 Arc 源码树（ARK_ARC_SRC）。它的
+# 未定义符号才是它在这里可用的原因；见上面的说明。
 SRC = os.path.join(config.ARC_SRC, "natives", "natives-freetype-android",
                    "libs", "arm64-v8a", "libarc-freetype.so")
 
@@ -64,12 +64,12 @@ DEST = os.path.join(config.LIBS, "arc", "libarc-freetypearm64.so")
 
 READELF = config.READELF
 
-# The build this is derived from. Pinned so that a different file cannot be
-# substituted silently -- the whole point of this script is that there is exactly
-# one copy of this library that works here.
-SRC_SHA1 = None      # checked against a recorded value once known; see main()
+# 本脚本所派生的那个构建。固定下来，防止别的文件被悄悄替换。
+# 本脚本的全部意义就在于：在这个平台上能用的这个库，
+# 有且只有一份拷贝。
+SRC_SHA1 = None      # 一旦已知就与记录值核对；见 main()
 
-# Every entry here must end up pointing at something that exists on the device.
+# 这里的每一条最终都必须指向设备上确实存在的东西。
 REWRITE = {
     "libm.so": "libc.so",
     "libdl.so": "libc.so",
@@ -189,8 +189,8 @@ def main():
         print("FAIL the installed copy differs from what was patched")
         return 1
 
-    # Read the result back with an independent tool rather than trusting the
-    # writer: the question is what a loader will see, not what was intended.
+    # 用独立的工具把结果读回来，而不是信任写入方：关键问题是加载器会看到
+    # 什么，而不是本意是什么。
     print("dest   : %s" % DEST)
     for l in needed_of(DEST):
         print("   %s" % l)

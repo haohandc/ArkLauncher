@@ -1,33 +1,33 @@
 #!/bin/bash
-# Install the STORE-CONFIGURATION package on a device and collect what it said.
+# 在设备上安装 STORE-CONFIGURATION 包，并收集它输出的信息。
 #
-# WHY THIS IS NOT deploy.sh
-#   deploy.sh refuses to install anything that fails verify_hap.py, and that gate
-#   fails BY DESIGN on this package: verify_hap.py pins the DEBUG buildMode's
-#   native bytes, while the store configuration strips them. See
-#   RELEASE-MAINTENANCE.md 2.2 -- the FAIL is the gate working, not a stale pin,
-#   and it is the reason nobody had ever run this configuration.
+# 为什么这不是 deploy.sh
+#   deploy.sh 拒绝安装任何未通过 verify_hap.py 的产物，而这道门禁
+#   在本包上是故意失败的：verify_hap.py 校验 DEBUG buildMode 的
+#   原生字节，而商店配置会把它剥掉。见
+#   RELEASE-MAINTENANCE.md 2.2 -- 这个 FAIL 说明门禁在正常工作，不是过期的校验值，
+#   也正是此前从没人跑过这套配置的原因。
 #
-#   So this script does the install and the log collection and skips the gate.
-#   It does NOT skip anything else: it checks the install and the launch actually
-#   reported success, because "the logs are empty" reads as "it crashed" and is
-#   the same mistake deploy.sh was written to stop making.
+#   所以本脚本做安装和日志收集，跳过门禁。
+#   其他一概不跳：它会检查安装和启动确实
+#   报告了成功，因为 "日志是空的" 会被读成 "它崩了"，
+#   正是 deploy.sh 当初要避免的同一个错误。
 #
-# WHAT IT IS FOR
-#   Reproducing "游戏闪退" from the AppGallery review, which the reviewer hit on a
-#   Mate 60 with the store package. The package built for this is
-#   product=default + buildMode=release: identical variables (release buildMode,
-#   stripped natives) but signed with the debug certificate, so it can be
-#   sideloaded. Build it with:
+# 用途
+#   复现应用市场评论里的"游戏闪退"，评论者在
+#   Mate 60 上用商店包遇到的。为此构建的包是
+#   product=default + buildMode=release：变量完全相同（release buildMode、
+#   剥离的原生库），但用 debug 证书签名，因此可以
+#   侧载。用以下命令构建：
 #
 #     bash build.sh assembleHap --mode module -p product=default -p buildMode=release
 #
-# Usage:
-#   bash scripts/install_repro.sh                  # one device, or ARK_HDC_TARGET
+# 用法：
+#   bash scripts/install_repro.sh                  # 单个设备，或 ARK_HDC_TARGET
 #   ARK_HDC_TARGET=<id> bash scripts/install_repro.sh
 #
-# ⚠️ It runs `uninstall` first, which ERASES the app sandbox (saves, and the
-#    Download-folder grant). Export saves before running it.
+# ⚠️ 它会先跑 `uninstall`，这会清空应用沙箱（存档，以及
+#    Download 目录的授权）。运行前请先导出存档。
 
 set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -42,7 +42,7 @@ PY=("${ARK_PYTHON:-python}")
 
 [ -f "${HDC[0]}" ] || { echo "!! hdc not found: ${HDC[0]}" >&2; exit 1; }
 
-# ---- which device (same rule as deploy.sh: never guess) --------------------
+# ---- 哪个设备（与 deploy.sh 同规则：绝不猜） --------------------
 HDC_TARGET="${ARK_HDC_TARGET:-}"
 if [ -z "$HDC_TARGET" ]; then
     TARGETS="$("${HDC[@]}" list targets 2>/dev/null | tr -d '\r' \
@@ -67,21 +67,21 @@ SIGNED="entry/build/default/outputs/default/$HAP_BASE.hap"
 [ -f "$SIGNED" ] || { echo "!! no signed HAP at $SIGNED" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
-# REFUSE A STALE PACKAGE
+# 拒绝过期产物
 #
-# This script installs a PREBUILT HAP -- it does not build one. That is
-# deliberate (it is the only way to install a store-configuration package, which
-# verify_hap.py rejects by design), but it means an edit made after the last
-# build is silently not tested: the app installs, launches, and behaves exactly
-# as the OLD code did, which reads as "my change did nothing".
+# 本脚本安装的是预构建 HAP -- 它不构建。这是
+# 刻意的（这是安装商店配置包的唯一方式，而
+# verify_hap.py 按设计会拒绝它），但这意味着最后一次构建之后的改动
+# 会被静默地不测试：应用照常安装、启动，行为与
+# 旧代码完全一样，读起来就是 "我的改动没起作用"。
 #
-# Measured, and it cost a round: Index.ets was edited at 11:56 and the HAP on
-# disk was from 11:51, so the "new" build under test was five minutes old, and
-# the log line that would have proved the new code had run was simply absent.
-# Absence of evidence was then mistaken for evidence about the code.
+# 实测过，代价是一轮返工：Index.ets 改于 11:56，而磁盘上的 HAP
+# 是 11:51 的，所以被测的 "新" 构建已经旧了五分钟，
+# 那条本可证明新代码跑过的日志行根本不存在。
+# 于是 "没有证据" 被误当成了关于代码的证据。
 #
-# Same shape as the rule this project already has: a deploy step that does not
-# fail on staleness hands you the previous build and calls it this one.
+# 与本项目已有的规则同形：一个不会因产物过期而
+# 报错的部署步骤，会把上一次的构建当成这一次交给你。
 # ---------------------------------------------------------------------------
 STALE=""
 for src in entry/src/main/ets/pages/Index.ets entry/src/main/cpp/launcher.c \
@@ -130,11 +130,11 @@ LAUNCHED=1
 if ! printf '%s' "$START_OUT" | grep -q "start ability successfully"; then
     LAUNCHED=0
     echo "!! launch did not report success -- logs below will be empty" >&2
-    # Name the cause when the device names it. A locked screen produces
-    # 10106102 and NO crash log at all, which otherwise reads as "it crashed on
-    # start" -- a completely different problem, and one that would be chased
-    # through the app's code for as long as it took to notice the tablet was
-    # asleep.
+    # 设备点明了原因时就写出来。锁屏会产生
+    # 10106102，且完全没有崩溃日志，否则会被读成 "它在
+    # 启动时崩了" -- 一个完全不同的问题，会被
+    # 翻遍应用代码去追查，直到有人注意到平板
+    # 是在休眠。
     if printf '%s' "$START_OUT" | grep -q "10106102"; then
         echo "!! the screen is locked (10106102). Unlock the device and run again --" >&2
         echo "!! nothing was tested. 'power-shell wakeup' can wake it but not unlock it." >&2
@@ -160,8 +160,8 @@ echo
 echo "===== the launcher's own crash.txt ====="
 hdc shell "cat /data/app/el2/100/base/$BUNDLE/files/crash.txt 2>/dev/null" || true
 
-# The faultlog is where a fault that never reached our handler ends up.
-# `hdc file recv` reaches it even though `ls` on the same directory is refused.
+# faultlog 是那些从未到达我们处理器的故障的归宿。
+# 即使同一目录上的 `ls` 被拒绝，`hdc file recv` 仍能读到它。
 echo
 echo "===== faultlog (pulled, not printed) ====="
 OUT_DIR="_faultlog_$(date +%Y%m%d-%H%M%S)"

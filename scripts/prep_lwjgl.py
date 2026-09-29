@@ -63,25 +63,25 @@ import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
 LIBS = config.LIBS
-NATIVE_DEST = os.path.join(LIBS, "lwjgl")        # real .so, executable area
-JAVA_DEST = os.path.join(LIBS, "lwjgl-java")     # jars, renamed to .so
+NATIVE_DEST = os.path.join(LIBS, "lwjgl")        # 真正的 .so，可执行区
+JAVA_DEST = os.path.join(LIBS, "lwjgl-java")     # jar，改名为 .so
 
-# One directory for both halves, so the version check below cannot be defeated by
-# someone pointing the jars and the natives at different releases.
+# 两半共用一个目录，这样下面那个版本检查就不会被人把 jar 和原生库指向
+# 不同发行版而绕过去。
 JAR_DIR = config.LWJGL_SRC
 
-# The version the whole set must agree on. Arc's own build targets 3.4.2, and the
-# natives collected for this platform are from that line.
+# 整套必须一致的版本。Arc 自己的构建目标是 3.4.2，为这个平台收集的
+# 原生库就出自那条线。
 WANT_VERSION = "3.4.2"
 
-# source file name -> sha1. The destination name is the same: these are real
-# shared objects and the loader looks them up by exactly these names.
+# 源文件名 -> sha1。目标名相同：这些是真正的共享对象，加载器就按
+# 这些名字查找它们。
 NATIVES = {
     "liblwjgl.so":        "663e5cab870ac3427cbfbe01f93facbc260fa504",
     "liblwjgl_opengl.so": "f3661e892d4d2deb3aa574cab2e64c13b7ac6b4d",
 }
 
-# source file name -> (destination name, sha1)
+# 源文件名 -> (目标名, sha1)
 JARS = {
     "lwjgl.jar":        ("lwjgl.so",        "cd7dd7a13abce9a2764364f58e138c6f99f50a7f"),
     "lwjgl-opengl.jar": ("lwjgl-opengl.so", "27698e706465a088d4c8eda34f98d69e5c8b32f7"),

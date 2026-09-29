@@ -51,7 +51,7 @@ import config
 PROJECT_ROOT = config.PROJECT_ROOT
 JDK_LIB = os.path.join(config.LIBS, "jdk21", "lib")
 
-# source name -> (shipped name, sha1)
+# 源文件名 -> (发布名, sha1)
 FILES = {
     "tzdb.dat": ("tzdb.so", "330a69ed889539d7b8f9ec8bcb00f49b5ee2895d"),
 }

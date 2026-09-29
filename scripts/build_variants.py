@@ -36,8 +36,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
 TMP = config.TMP
-# The variants land next to the pinned one they are compared against, which is
-# what prep_game.py ships (ARK_GAME_JAR).
+# 变体落在用来比对的那个固定 jar 旁边，也就是 prep_game.py
+# 发布的那个（ARK_GAME_JAR）。
 OUT_DIR = os.path.dirname(config.GAME_JAR)
 
 BASE_JAR = config.PATCHED_JAR

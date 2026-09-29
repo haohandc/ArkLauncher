@@ -26,9 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import config
 
 TB = os.path.join(config.TMP, "arcbuild")
-# The upstream release jar in, the patched jar out. Both sit in payload-src/
-# (config.py), so the three-stage chain -- patch, repack, variant -- can be
-# re-run in place without moving anything by hand.
+# 输入是上游发行 jar，输出是打好补丁的 jar。两者都在 payload-src/
+# （见 config.py），所以 patch、repack、variant 这三段链条可以
+# 原地重跑，不用手工搬动任何东西。
 SRC_JAR = config.UPSTREAM_JAR
 OUT_DIR = os.path.dirname(config.PATCHED_JAR)
 OUT_JAR = config.PATCHED_JAR

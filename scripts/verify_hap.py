@@ -69,24 +69,24 @@ def find_hap():
             if f.endswith(".hap"):
                 hits.append(os.path.join(dp, f))
     if not hits:
-        # Naming the product and the directory matters here: "no HAP" and
-        # "you asked for the wrong product" look identical otherwise, and this
-        # project has already spent a round looking at entry/build/default/
-        # while the release build sat in entry/build/release/.
+        # 这里必须写明产品和目录："没有 HAP" 和
+        # "你要错了产品" 否则看上去一模一样，而本项目
+        # 已经有过一轮盯着 entry/build/default/，
+        # 而 release 构建其实躺在 entry/build/release/ 的教训。
         print("!! no .hap under %s" % root)
         print("   (ARK_PRODUCT=%s -- set ARK_PRODUCT=release for a store build)" % config.PRODUCT)
         return None
 
-    # ONLY THE CURRENT VERSION. A product's output directory accumulates: after
-    # a version bump it holds the previous version's packages too, and hvigor
-    # does not clean them out. Sorting the whole directory and taking the first
-    # is not a tie-break here, it is a coin toss -- measured, `-v0.2.0-beta.2-`
-    # sorts BEFORE `-v0.2.0.2-` because `-` (0x2D) < `.` (0x2E), so the stale
-    # build would have been the one verified, and the version gate would then
-    # have reported a mismatch for the file it should not have opened.
+    # 只要当前版本。产品的输出目录是累积的：版本一升
+    # 它也会留着上一版本的包，而 hvigor 并不会清理
+    # 它们。把整个目录排序取第一个在这里不是平局裁决，
+    # 而是抛硬币 -- 实测，`-v0.2.0-beta.2-` 排在
+    # `-v0.2.0.2-` 之前，因为 `-` (0x2D) < `.` (0x2E)，于是被
+    # 校验的会是那个陈旧构建，版本闸门接着就会
+    # 为一个本不该打开的文件报出不匹配。
     #
-    # Filtering on the artifact name instead makes the failure say the true
-    # thing: "no build of THIS version here", plus what is here.
+    # 改成按 artifactName 过滤，失败信息才会说实话：
+    # "这里没有这个版本的构建"，外加这里都有些什么。
     want = config.ARTIFACT_NAME
     hits.sort()
     mine = [p for p in hits if os.path.basename(p).startswith(want)]
@@ -159,11 +159,11 @@ def check_version_matches_name(hap, ok_ref):
     if ver != ver_want:
         problems.append("versionName %r != config.APP_VERSION %r"
                         % (ver, ver_want))
-    # versionCode is what the platform orders installs by, and it is the only one
-    # of these that fails silently: a code that is too low does not error, it
-    # just refuses to replace the installed build. Checked against the value
-    # derived from versionName, not only against the constant -- so a bump that
-    # changes one and not the other is caught here rather than on a device.
+    # versionCode 是平台给安装排序的依据，也是这些里唯一
+    # 会静默失败的：code 太低不会报错，它只是
+    # 拒绝替换已安装的构建。校验时比对的是由 versionName
+    # 推导出的值，而不只是常量 -- 所以只改了一个没改另一个的
+    # 版本升级会在这里被抓住，而不是在设备上。
     if code != code_want:
         problems.append("versionCode %r != config.VERSION_CODE %r"
                         % (code, code_want))
@@ -199,16 +199,16 @@ def main():
     print("     %d bytes" % os.path.getsize(hap))
     print()
 
-    # Collapsed into a list so the helper can flag a failure without being
-    # threaded through a return value. The check runs first because a name and a
-    # version that disagree makes everything below describe the wrong build.
+    # 收进一个列表，好让辅助函数能标出失败而无需
+    # 通过返回值层层传递。这项检查放最前，因为名称和
+    # 版本不一致会让后面所有内容描述的都是错误的构建。
     ok_ref = [True]
     check_version_matches_name(hap, ok_ref)
 
     os.makedirs(TMP, exist_ok=True)
     with zipfile.ZipFile(hap) as z:
         names = z.namelist()
-        # 1) what made it in at all
+        # 1) 到底哪些进了包
         want = {
             "anchor": "libs/arm64-v8a/libjvm.so",
             "realjvm": "libs/arm64-v8a/jdk21/lib/server/libjvm_real.so",
@@ -217,8 +217,8 @@ def main():
             "sdl": "libs/arm64-v8a/libSDL3.so",
             "mainso": "libs/arm64-v8a/libmain.so",
         }
-        # libcxxabi_real.so is deliberately NOT here any more: the hand-written
-        # shim replacement was dropped on 2026-09-19 (see CMakeLists.txt).
+        # libcxxabi_real.so 不再列在这里是故意的：手写的
+        # shim 替换已于 2026-09-19 移除（见 CMakeLists.txt）。
         print("== 1. presence in the archive ==")
         missing = []
         for label, p in want.items():
@@ -237,7 +237,7 @@ def main():
             print("!! missing: %s" % ", ".join(missing))
             return 1
 
-        # extract just what we need to inspect
+        # 只解压我们需要检查的那部分
         for label, p in want.items():
             dst = os.path.join(TMP, label + ".so")
             with z.open(p) as src, open(dst, "wb") as out:
@@ -267,10 +267,10 @@ def main():
                                      b"%s%slib%sjimg.so" in blob))
     print("   old 'modules' gone : %s" % (b"%s%slib%smodules" not in blob))
 
-    # The dynamic table must be COMPLETE, not merely parseable. A gate that only
-    # checked "the strings I edited are edited" passed once while 23 entries --
-    # including 121,769 relocations -- had silently disappeared and the library
-    # could not be loaded at all. Count entries and require the tags that matter.
+    # 动态表必须是完整的，而不只是能解析。一个只检查
+    # "我改的字符串改了没" 的闸门曾经过关，而 23 个条目 --
+    # 包括 121,769 个重定位 -- 已经悄悄消失，该库
+    # 根本加载不了。所以要数条目并强制要求关键 tag 存在。
     n_entries = out_d.count("(NEEDED)") + out_d.count("(SONAME)")
     for tag in ("(RELA)", "(JMPREL)", "(SYMTAB)", "(STRTAB)", "(GNU_HASH)", "(INIT)"):
         n_entries += out_d.count(tag)
@@ -287,30 +287,30 @@ def main():
     print("   offending NEEDED entries: %d" % len(bad))
     print()
 
-    # The shim must be the JDK's own, byte for byte. AMCL -- which works on this
-    # device with the same libjvm.so -- uses this exact file, and the whole point
-    # of dropping our replacement was to stop being the odd one out. A hash is
-    # the only check that cannot be fooled by "a file with the right name exists".
+    # shim 必须是 JDK 自带的那份，逐字节一致。AMCL -- 在这台
+    # 设备上用同一个 libjvm.so 能跑 -- 用的就是这个文件，而
+    # 放弃我们那份替换的全部意义就是不作出头的异类。哈希是
+    # 唯一不会被"同名文件存在"骗过的检查。
     print("== 5. the shipped C++ shim is the unmodified JDK one ==")
     import hashlib
-    # ⚠️ TWO accepted values, not one, and the reason is a buildMode decision.
+    # ⚠️ 接受两个值而不是一个，原因是一个 buildMode 决定。
     #
-    # entry/build-profile.json5's buildOptionSet entry named "release" sets
-    # strip:true, which OVERRIDES the target-level strip:false -- measured, not
-    # assumed: the same tree gives libjvm_real.so at 25,322,128 B with .symtab
-    # under buildMode=debug and 20,108,408 B with neither under
-    # buildMode=release. So a package's native bytes depend on which buildMode
-    # produced it, and a gate that accepts only one of them FAILS on the other.
+    # entry/build-profile.json5 里名为 "release" 的 buildOptionSet 条目设了
+    # strip:true，它会覆盖 target 级的 strip:false -- 实测，不是
+    # 假设：同一棵树在 buildMode=debug 下给出带 .symtab 的 libjvm_real.so
+    # 25,322,128 B，而在 buildMode=release 下两者都没有，为
+    # 20,108,408 B。所以一个包的 native 字节取决于它由哪个 buildMode
+    # 产出，只接受其中之一的闸门会在另一个上 FAIL。
     #
-    # Accepting both is the honest form: the claim being checked is "these are
-    # the bytes we assembled, not something else", and it is true of both. A
-    # gate that fails on a correct package teaches people to ignore it.
+    # 两个都接受才是诚实的做法：要校验的命题是"这些是
+    # 我们组装出来的字节，不是别的东西"，而它对两者都成立。一个
+    # 会在正确包上失败的闸门只会教人忽略它。
     #
-    # What is NOT accepted is an unknown value -- that is still a MISMATCH, and
-    # the failure prints the hash so it can be identified.
+    # 不接受的是未知值 -- 那仍然是 MISMATCH，并且
+    # 失败时会打印哈希以便辨识。
     WANT_SHIM = (
-        "b605f5863ca1a75170a814ab4054a9867c346e15",   # buildMode=debug, unstripped
-        "ceff66f064a4fee9837b7ea1a2cd9e5997db1d80",   # buildMode=release, stripped
+        "b605f5863ca1a75170a814ab4054a9867c346e15",   # buildMode=debug，未 strip
+        "ceff66f064a4fee9837b7ea1a2cd9e5997db1d80",   # buildMode=release，已 strip
     )
     shim_path = os.path.join(TMP, "shim.so")
     got_shim = hashlib.sha1(open(shim_path, "rb").read()).hexdigest()
@@ -319,26 +319,26 @@ def main():
     print()
 
     # ==================================================================
-    # 6. THE GAME -- and the reason this is a hash and not a size check.
+    # 6. 游戏本体 -- 以及这里为什么用哈希而不是大小检查。
     #
-    # The jar ships under a ".so" name (see prep_game.py), which means nothing in
-    # the tool chain ever parses it: not hvigor, not the packer, not the installer.
-    # It is opaque bytes all the way to the device. So the only meaningful
-    # question is whether the 86,957,725 bytes on the device are the SAME bytes as
-    # the pinned build -- and the only way to answer that is to hash them.
+    # 这个 jar 以 ".so" 之名发运（见 prep_game.py），意味着工具链里
+    # 没有任何东西会解析它：hvigor 不，打包器不，安装器也不。
+    # 一直到设备上它都是不透明的字节。所以唯一有意义的
+    # 问题就是设备上那 86,957,725 字节是否与固定构建的字节相同
+    # -- 而回答它的唯一办法就是对它们做哈希。
     #
-    # A size check would pass for the unpatched jar too, and for a jar built by
-    # re-running the upstream stage while missing a downstream one, which is how a
-    # wrong jar shipped once already in this project.
+    # 大小检查对未打补丁的 jar 也会过关，对重跑上游阶段
+    # 却漏了下游阶段的 jar 也会过关，而本项目已经
+    # 这样发出去过一个错误的 jar。
     #
-    # It is hashed by streaming, straight out of the archive, so no 87 MB copy is
-    # written just to be deleted.
+    # 采用流式哈希，直接从归档里读，这样就不会
+    # 写下 87 MB 的副本只为把它删掉。
     # ==================================================================
     print("== 6. the game jar, hashed as packaged ==")
     import hashlib
-    # ⭐ The UPSTREAM jar, unmodified -- so this is a statement about a file
-    # Anuken published, not about our own build output. See the note in
-    # prep_game.py. Changed 2026-09-28; it used to pin our multi-stage variant.
+    # ⭐ 上游原版 jar，未修改 -- 所以这是关于 Anuken 发布的
+    # 文件的陈述，而不是关于我们自己构建产物的。见
+    # prep_game.py 里的说明。2026-09-28 更改；它曾固定的是我们多阶段的变体。
     WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
     GAME_ENTRY = "libs/arm64-v8a/game/mindustry.so"
     game_ok = False
@@ -364,34 +364,34 @@ def main():
     print()
 
     # ==================================================================
-    # 6b. THE PATCH JAR.
+    # 6b. 补丁 jar。
     #
-    # Under the architecture adopted 2026-09-28 our Arc classes are no longer
-    # written into the game jar; they ship in a separate jar that the launcher
-    # puts AHEAD of it on -Djava.class.path. That makes the game jar pristine
-    # (step 6 pins it) and puts our classes somewhere new -- which means the
-    # place they live needs a gate of its own, or a build that forgot to include
-    # them would be caught by nothing at all. The game would still start: it
-    # would simply run upstream's SDL2 backend, which cannot load its own
-    # libSDL2 here, and the failure would look like anything but a missing jar.
+    # 按 2026-09-28 采用的架构，我们的 Arc 类不再
+    # 写进游戏 jar；它们走一个单独的 jar，由启动器
+    # 在 -Djava.class.path 上放在它前面。这让游戏 jar 保持原封
+    #（步骤 6 固定它），并把我们的类放到一个新地方 -- 意味着
+    # 它们所在之处需要自己的闸门，否则一个忘了包含
+    # 它们的构建根本不会被任何东西发现。游戏仍会启动：它只是
+    # 会跑上游的 SDL2 后端，而那个后端在这里加载不了自己的
+    # libSDL2，于是这个失败看上去什么都不像，就是不像缺了个 jar。
     #
-    # Three things are checked, in order of how specific they are:
-    #   * the entry is present and is really a jar
-    #   * the classes that exist ONLY in our backend are in it
-    #   * so is a class carrying a change we made (a rename would keep the first
-    #     check passing while the patch did nothing)
+    # 检查三件事，按具体程度排序：
+    #   * 条目存在且确实是个 jar
+    #   * 只存在于我们后端的类在它里面
+    #   * 还有一个带着我们所作改动的类（换个名字会让第一项
+    #     检查照样过关，而补丁其实什么都没做）
     # ==================================================================
     print("== 6b. the Arc patch jar ==")
     PATCH_ENTRY = "libs/arm64-v8a/patchjar/arcpatch.so"
-    # Only-in-our-backend. Their absence means the jar was built from a narrowed
-    # source set -- which is a mistake this project actually made, see
-    # build_arc_patch.py's note about SdlConfig.
+    # 只存在于我们后端的类。它们缺席意味着 jar 是用收窄过的
+    # 源码集构建的 -- 这是本项目真犯过的错，见
+    # build_arc_patch.py 里关于 SdlConfig 的说明。
     PATCH_MUST_EXIST = [
         "arc/backend/sdl/GLBootstrap.class",
         "arc/backend/sdl/GLDiag.class",
         "arc/backend/sdl/GLDispatchFix.class",
     ]
-    # A class we changed, and a string only the changed version contains.
+    # 一个我们改过的类，以及只有改后的版本才含有的字符串。
     PATCH_MARKER = ("arc/graphics/gl/GLVersion.class", b"(Ljava/lang/CharSequence;)Z")
     patch_ok = False
     with zipfile.ZipFile(hap) as z:
@@ -421,25 +421,25 @@ def main():
     print()
 
     # ==================================================================
-    # 7. LWJGL -- jars and natives, both present and both the right bytes.
+    # 7. LWJGL -- jar 和 native，两者都在且字节都正确。
     #
-    # Same reasoning as the game jar above: the Java half ships renamed to ".so"
-    # and the native half is opaque to every tool in the chain, so neither one is
-    # validated by anything except this. A version mismatch between the two
-    # halves is the specific failure this guards against -- they come from two
-    # different sources and would only fail at the first call, on the device.
+    # 理由与上面的游戏 jar 相同：Java 那半改名成 ".so" 发运，
+    # native 那半对链上每个工具都不透明，所以两者都不被
+    # 除它之外的任何东西校验。两半之间的版本不匹配
+    # 就是它防的那个具体失败 -- 它们来自两个不同
+    # 来源，且只会在设备上的第一次调用时才失败。
     # ==================================================================
     print("== 7. LWJGL payload ==")
-    # lwjgl/libSDL3.so is deliberately ABSENT from this table, and from the HAP.
-    # There used to be a second SDL3 there, taken from a prebuilt HarmonyOS app,
-    # while this project builds its own from entry/src/main/cpp/SDL/ into the top
-    # of the bundle. org.lwjgl.librarypath lists the bundle first, and that was
-    # measured resolving to the bundle copy, so the lwjgl/ one was unreachable --
-    # two copies of one library in one process is a hazard this project has
-    # already been bitten by once. See prep_lwjgl.py. The top-level
-    # libs/arm64-v8a/libSDL3.so is checked for presence in step 1; its hash is
-    # not pinned because it is built here, so pinning it would fail on any
-    # legitimate rebuild rather than on a mistake.
+    # lwjgl/libSDL3.so 被故意排除在这张表之外，也从 HAP 里排除。
+    # 那里曾有过第二个 SDL3，取自一个预构建的 HarmonyOS 应用，
+    # 而本项目是自己从 entry/src/main/cpp/SDL/ 构建到 bundle 顶层的。
+    # org.lwjgl.librarypath 先列 bundle，且实测
+    # 解析到的是 bundle 里那份，所以 lwjgl/ 那份永远到不了 --
+    # 一个进程里同一库有两份，是本项目已经
+    # 被咬过一次的隐患。见 prep_lwjgl.py。顶层
+    # libs/arm64-v8a/libSDL3.so 的存在性在步骤 1 检查；它的哈希
+    # 不固定，因为它是在这里构建的，固定它会在任何
+    # 合法重建上失败，而不是在错误上失败。
     LWJGL = {
         "libs/arm64-v8a/lwjgl/liblwjgl.so":
             "663e5cab870ac3427cbfbe01f93facbc260fa504",
@@ -452,17 +452,17 @@ def main():
         "libs/arm64-v8a/lwjgl-java/lwjgl-sdl.so":
             "96d577ef9b661fe4bb9bfb32fbb1de3ff34219cd",
     }
-    # Arc's own natives. They ship here rather than being extracted by Arc at
-    # runtime, because the extracted copy cannot be dlopen'd -- see prep_arc.py.
-    # Same gate, same reason: nothing downstream validates these bytes.
+    # Arc 自己的 native 库。它们随包发运，而不是让 Arc 在
+    # 运行时解压，因为解压出来的那份无法 dlopen -- 见 prep_arc.py。
+    # 同样的闸门，同样的理由：下游没有任何东西校验这些字节。
     ARC = {
         "libs/arm64-v8a/arc/libarcarm64.so":
             "db9d78b196beaa237a153b622b781e06be973462",
-        # NOT the jar's copy: that one is glibc and cannot load here. This is
-        # Arc's Android build with its layout dependencies repointed at libc.so;
-        # see prep_freetype.py. The hash differs from the jar's on purpose.
-        # Both strip states, same reason as WANT_SHIM above. These two live in
-        # libs/ as well, so the release buildMode strips them too.
+        # 不是 jar 里那份：那份是 glibc 的，在这里加载不了。这是
+        # Arc 的 Android 构建，其布局依赖已被改指向 libc.so；
+        # 见 prep_freetype.py。哈希和 jar 里那份不同是故意的。
+        # 两种 strip 状态都要，理由同上面的 WANT_SHIM。这两个也放在
+        # libs/ 下，所以 release buildMode 也会 strip 它们。
         "libs/arm64-v8a/arc/libarc-freetypearm64.so": (
             "004df783590ce27c79396a6432cfb9820538db7c",   # debug
             "41537d6980215a0921b403a223c2a9ea1ec04f26",   # release
@@ -473,24 +473,24 @@ def main():
         ),
     }
     LWJGL.update(ARC)
-    # The JDK's time-zone database, shipped under a .so name for the same reason
-    # the module image is: hvigor only carries names ending in ".so", and
-    # java.base opens "tzdb.dat" by that exact name. Without it the game does not
-    # start -- see prep_jdklib.py.
+    # JDK 的时区数据库，以 .so 之名发运，理由和
+    # 模块镜像一样：hvigor 只携带以 ".so" 结尾的名字，而
+    # java.base 正是按这个确切名字打开 "tzdb.dat"。没有它游戏就
+    # 起不来 -- 见 prep_jdklib.py。
     LWJGL["libs/arm64-v8a/jdk21/lib/tzdb.so"] = \
         "330a69ed889539d7b8f9ec8bcb00f49b5ee2895d"
 
-    # The launcher's own helper jar is checked structurally rather than by hash:
-    # it is compiled from source on each prep run, and a jar carries timestamps,
-    # so the same source produces a different file every time. What matters is
-    # that the class it is supposed to carry is inside the copy in the HAP.
+    # 启动器自己的 helper jar 做结构检查而不是哈希检查：
+    # 它在每次 prep 运行时从源码编译，而 jar 带时间戳，
+    # 所以同一份源码每次产出的文件都不同。要紧的是
+    # 它应该携带的类确实在 HAP 里那份的里面。
     print("== 8. the launcher helper jar ==")
-    # NOTE  `import io` was here until 2026-09-29 and had to go: Python decides a
-    # name is local for the WHOLE function if any import of it appears anywhere in
-    # that function, so this line made `io` a local of main() and the top-level
-    # import invisible -- section 6b, which runs first, died with
-    # "cannot access local variable 'io'". The import at the top of the file
-    # covers every use in here.
+    # NOTE  `import io` 曾在这里，直到 2026-09-29 必须移除：Python 会判定一个
+    # 名字在整函数内都是局部名，只要该函数任何位置出现对它的 import，
+    # 所以这一行让 `io` 成了 main() 的局部名，顶层
+    # import 不可见 -- 先执行的 6b 段死于
+    # "cannot access local variable 'io'"。文件顶部的 import
+    # 覆盖这里的每一处使用。
     helper_entry = "libs/arm64-v8a/launcher/helper.so"
     helper_class = "com/haohandc/launcher/NativeLoader.class"
     helper_ok = False
@@ -524,7 +524,7 @@ def main():
                         break
                     h.update(b)
             got_h = h.hexdigest()
-            # `want` is either one hash or a tuple of the accepted ones.
+            # `want` 要么是一个哈希，要么是被接受值的元组。
             ok_h = got_h in (want if isinstance(want, tuple) else (want,))
             lwjgl_ok = lwjgl_ok and ok_h
             print("   %-9s %-42s %s"

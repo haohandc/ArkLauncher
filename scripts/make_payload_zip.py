@@ -50,13 +50,13 @@ import config
 
 PAYLOAD_README = "README-PAYLOAD.txt"
 
-# path RELATIVE TO config.LIBS -> why its absence is fatal, or who produces it
+# 相对 config.LIBS 的路径 -> 为什么缺了它是致命的，或者它是谁产出的
 #
-# ⚠️ No "arm64-v8a/" prefix: config.LIBS already ends with it. Writing it in both
-# places doubles the path, and the first version of this file did exactly that --
-# the assertion fired on a file that was right there, which is how it was found.
-# A check that fails on a correct tree is the same defect as one that passes on a
-# broken tree: it trains the reader to ignore it.
+# ⚠️ 不要加 "arm64-v8a/" 前缀：config.LIBS 已经以它结尾。两边都写会让
+# 路径翻倍，这个文件的第一版就是这么干的 ——
+# 断言在一个明明就在那里的文件上报错，这就是它被发现的方式。
+# 在正确的工作树上失败的检查，和在坏掉的工作树上通过的检查是同一种缺陷：
+# 它会让读者学会忽略它。
 REQUIRED = {
     "jdk21/lib/jimg.so":
         "the module image (134 MB). Renamed from lib/modules by prep_jdklib.py -- "
@@ -71,22 +71,22 @@ REQUIRED = {
         "in a way that looks like a server problem -- run scripts/prep_jdkconf.py",
     "game/mindustry.so":
         "the game jar, renamed. The classpath points at it",
-    # "probe/probe-mod.jar.so" USED TO BE REQUIRED HERE and is no longer, because
-    # it is no longer produced: tools/probe-mod/build.sh stopped installing it
-    # into libs/, since the ArkTS code that copied it into the game's mods
-    # directory at every launch was removed along with the rest of the importer.
-    # Leaving the assertion in would now fail on a perfectly good tree -- and a
-    # check that fails on a correct tree is the same defect as one that passes on
-    # a broken one: it trains the reader to ignore it.
+    # "probe/probe-mod.jar.so" 曾经也在这里要求，现在不再要求，因为
+    # 它已经不再产出：tools/probe-mod/build.sh 不再把它安装进
+    # libs/，因为每次启动把它拷进游戏 mods 目录的 ArkTS 代码
+    # 已经随导入器其余部分一起删掉了。
+    # 留着这条断言现在会在一个完全正常的工作树上失败 —— 而
+    # 一个在正确的工作树上失败的检查，和一个在坏掉的树上通过的检查是同一种缺陷：
+    # 它会让读者学会忽略它。
 }
 
-# NOT asserted, on purpose: libmain.so and libSDL3.so.
-#   They appear in the HAP under libs/arm64-v8a/ but they are BUILD OUTPUTS --
-#   hvigor takes them from the CMake tree, and "bash build.sh assembleHap"
-#   regenerates both from source. Requiring them here would demand that someone
-#   ship compiled objects alongside the source they are compiled from, and the
-#   first version of this file did require libmain.so and stopped on a payload
-#   that was perfectly good.
+# 故意不做的断言：libmain.so 和 libSDL3.so。
+#   它们出现在 HAP 的 libs/arm64-v8a/ 下，但它们是构建产物 ——
+#   hvigor 从 CMake 树里取它们，"bash build.sh assembleHap"
+#   会从源码重新生成这两个。在这里要求它们等于要求有人
+#   把编译产物和他们编译所用的源码一起发出去，而
+#   这个文件的第一版确实要求了 libmain.so，结果在一个完全正常的
+#   payload 上停了下来。
 
 
 def sha256f(path):
@@ -120,7 +120,7 @@ def main():
     if not os.path.isdir(config.LIBS):
         sys.exit("!! %s does not exist -- run the prep_* scripts first" % config.LIBS)
 
-    # --- 1. the assertions, BEFORE anything is written -----------------------
+    # --- 1. 断言，在任何东西被写入之前 -----------------------
     print("checking the payload")
     for rel, why in sorted(REQUIRED.items()):
         full = os.path.join(config.LIBS, rel)
@@ -139,7 +139,7 @@ def main():
     if not files:
         sys.exit("!! nothing under %s" % config.LIBS)
 
-    # --- 2. write -----------------------------------------------------------
+    # --- 2. 写入 -----------------------------------------------------------
     out = os.path.join(dist, "%s-payload.zip" % config.ARTIFACT_NAME)
     print("\nwriting %s" % os.path.basename(out))
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
@@ -147,9 +147,9 @@ def main():
         for full, rel in files:
             z.write(full, rel)
 
-    # --- 3. reopen and compare the SETS ------------------------------------
-    # Not the counts: a count matches again if one entry is lost and another
-    # gained, which is the exact shape of the drift that was found by hand.
+    # --- 3. 重新打开并比对【集合】 ------------------------------------
+    # 不是比数量：丢一个条目、多一个条目，数量照样对得上，
+    # 而这正是当时手工发现的那种漂移的形态。
     print("verifying the written zip")
     with zipfile.ZipFile(out) as z:
         bad = z.testzip()

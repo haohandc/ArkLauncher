@@ -39,17 +39,17 @@ import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-# equal length by construction: both are 7 bytes
+# 构造上长度相等：都是 7 字节
 OLD_NAME = b"modules"
 NEW_NAME = b"jimg.so"
 assert len(OLD_NAME) == len(NEW_NAME), "patch would shift offsets"
 
-# the full format strings we are willing to touch
+# 我们愿意修改的完整格式串
 TARGETS = [
     (b"%s%slib%s" + OLD_NAME, b"%s%slib%s" + NEW_NAME),
     (b"%/" + b"lib/" + OLD_NAME, b"%/" + b"lib/" + NEW_NAME),
 ]
-# must never be touched: it is a logical path inside the image
+# 绝不能碰：它是镜像内部的逻辑路径
 FORBIDDEN = b"%/" + OLD_NAME + b"/java.base"
 
 
@@ -121,7 +121,7 @@ def drop_soname(data):
     while o + 16 <= off + size:
         tag, val = _s.unpack_from("<qQ", data, o)
         entries.append((tag, val))
-        if tag == 0:          # DT_NULL terminates; do not read past it
+        if tag == 0:          # DT_NULL 终止列表；不要读过它
             break
         o += 16
 
@@ -130,7 +130,7 @@ def drop_soname(data):
     if removed == 0:
         return 0
 
-    # pad back to the original byte length with extra terminators
+    # 用额外的终止项补回原始字节长度
     while len(kept) * 16 < size:
         kept.append((0, 0))
 
@@ -139,19 +139,19 @@ def drop_soname(data):
     return removed
 
 
-# Tags a loadable shared object must still expose. This is written as an
-# INVARIANT LIST, not as "the things I changed" -- an earlier version of this
-# gate only checked that my two edited strings were edited and that my one
-# protected string was intact. All of that passed while the library was in fact
-# unloadable, because 23 dynamic entries had silently vanished.
+# 可加载共享对象仍必须暴露的标签。这里写成的是
+# 不变量清单，而不是"我改了什么" -- 早先版本的这道
+# 关卡只检查我编辑的两个串被改过、我保护的
+# 那一个串完好。那些全都通过了，而库实际上
+# 不可加载，因为 23 个动态条目已经悄悄消失。
 REQUIRED_TAGS = {
     1:  "NEEDED", 5: "STRTAB", 6: "SYMTAB", 10: "STRSZ",
     7:  "RELA", 8: "RELASZ", 9: "RELAENT",
     0x6ffffef5: "GNU_HASH",
     0x19: "INIT_ARRAY", 0xc: "INIT",
 }
-# DT_SONAME (14) is REQUIRED now -- the unmodified library carries it and every
-# known-working configuration has it, so its absence would itself be a deviation.
+# DT_SONAME (14) 现在是必需的 -- 未修改的库带有它，每个
+# 已知可用的配置也都有它，所以缺少它本身就是一种偏离。
 REQUIRED_SONAME = 14
 
 
@@ -188,7 +188,7 @@ def main():
     data = bytearray(open(src, "rb").read())
     print("input : %s (%d bytes)" % (src, len(data)))
 
-    # safety: the forbidden string must be present and must stay intact
+    # 安全检查：禁止串必须存在且必须保持完好
     if data.count(FORBIDDEN) == 0:
         raise SystemExit("!! expected to find %r -- wrong libjvm?" % FORBIDDEN)
     print("  found %d x %r (left alone)" % (data.count(FORBIDDEN), FORBIDDEN))
@@ -204,16 +204,16 @@ def main():
         print("  %-24r -> %-24r  (%d occurrence%s)"
               % (old, new, n, "" if n == 1 else "s"))
 
-    # --- DT_SONAME: deliberately LEFT ALONE (2026-09-19) ---------------------
-    # It used to be blanked so the anchor could be linked against this file by
-    # name. The anchor now carries a rewritten absolute path instead, so the
-    # SONAME is irrelevant to it -- and keeping the library as unmodified as
-    # possible is worth more than the tidiness of removing it. See drop_soname()
-    # below for why the old way of removing it was actively harmful.
+    # --- DT_SONAME: 刻意保持原样 (2026-09-19) ---------------------
+    # 它以前会被清空，好让 anchor 能按名字链接到这个文件。
+    # 现在 anchor 改为携带重写后的绝对路径，所以对
+    # 它而言 SONAME 无关紧要 -- 而让库尽量保持未修改，
+    # 比移除它带来的整洁更值得。见下方 drop_soname()
+    # 了解为什么旧的移除方式反而有害。
     print()
     print("  DT_SONAME : left intact (unmodified, as the JDK ships it)")
 
-    # verify BEFORE writing, so a bad patch never reaches the libs directory
+    # 写入前先校验，这样坏的补丁永远不会进到 libs 目录
     print()
     print("  --- dynamic table integrity ---")
     verify_dynamic(data, os.path.basename(dst))

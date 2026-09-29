@@ -42,8 +42,8 @@ ENTRY = "com/haohandc/launcher/NativeLoader.class"
 DEST_DIR = os.path.join(config.LIBS, "launcher")
 DEST = os.path.join(DEST_DIR, "helper.so")
 
-# javac and jar are not on PATH on the machine this was built on, so the JDK is
-# named in config.py rather than looked up.
+# 构建本项目的机器上 PATH 里没有 javac 和 jar，所以 JDK 是在 config.py
+# 里写明的，而不是去查找。
 JAVAC = config.JAVAC
 JAR = config.JAR
 
@@ -89,8 +89,8 @@ def main():
             print("FAIL no .java under %s" % SRC_DIR)
             return 1
 
-        # -source/-target 17: the runtime is 21, but the game's classes are 17 and
-        # there is no reason for the helper to demand more than the game does.
+        # -source/-target 17：运行时是 21，但游戏的类是 17，helper
+        # 没有理由要求比游戏更高的版本。
         cmd = [JAVAC, "-source", "17", "-target", "17",
                "-encoding", "UTF-8", "-nowarn", "-d", classes] + sources
         r = subprocess.run(cmd, capture_output=True, text=True,
@@ -117,7 +117,7 @@ def main():
             print(r.stdout + r.stderr)
             return 1
 
-        # Verify the jar really carries the class, rather than trusting jar(1).
+        # 核实 jar 里确实带了这个类，而不是信任 jar(1)。
         with zipfile.ZipFile(jar_tmp) as z:
             if ENTRY not in z.namelist():
                 print("FAIL %s is not in the produced jar" % ENTRY)

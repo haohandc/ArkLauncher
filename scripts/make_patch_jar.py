@@ -54,36 +54,36 @@ import config
 
 ARCBUILD = os.path.join(config.TMP, "arcbuild")
 
-# The arc-core half. Same three names patch_mindustry.py lists in SINGLE.
+# arc-core 这一半。就是 patch_mindustry.py 在 SINGLE 里列的那三个名字。
 CORE_CLASSES = [
     "arc/graphics/gl/GLVersion.class",
     "arc/graphics/gl/GLVersion$GlType.class",
     "arc/graphics/gl/Shader.class",
 ]
-# The backend half -- a whole directory, because it is a drop-in replacement for
-# the SDL2 backend rather than a set of individual edits.
+# backend 这一半 —— 整个目录，因为它是 SDL2 backend 的即插即用替代品，
+# 而不是一组零散的改动。
 SDK_DIR_SRC = os.path.join(ARCBUILD, "sdl3", "arc", "backend", "sdl")
 SDK_DIR_DEST = "arc/backend/sdl/"
 
-# Where the launcher looks for it. Mirrors PATCH_JAR in launcher.c.
+# 启动器查找它的位置。与 launcher.c 里的 PATCH_JAR 保持一致。
 OUT_DIR = os.path.join(config.PROJECT_ROOT, "entry", "libs", "arm64-v8a", "patchjar")
 OUT_JAR = os.path.join(OUT_DIR, "arcpatch.so")
 
-# The backend is replaced as a WHOLE DIRECTORY, not as a list of edited files --
-# patch_mindustry.py's own note says "目录替换（backend-sdl3 整体覆盖 backend-sdl）".
-# Ten of the backend's twelve sources are ours (seven modified, three new), and
-# a patch containing only the edited ones is not equivalent: our SdlApplication
-# reads a field that only our SdlConfig declares, so shipping one without the
-# other fails at runtime with NoSuchFieldError. Measured on a device, 2026-09-28.
+# backend 是作为【整个目录】被替换的，而不是一份被改文件的清单 ——
+# patch_mindustry.py 自己的注释就写着 "目录替换（backend-sdl3 整体覆盖 backend-sdl）"。
+# backend 十二个源文件里有十个是我们的（七个改动，三个新增），
+# 只包含被改文件的补丁并不等价：我们的 SdlApplication 会读一个
+# 只有我们的 SdlConfig 声明的字段，所以只发其中一个、不发另一个
+# 会在运行时抛 NoSuchFieldError。2026-09-28 在真机上实测。
 #
-# So the set is whatever build_arc_patch.py compiled into sdl3 -- every class,
-# including the ones whose source we never touched but which are recompiled
-# because they are in the same module.
+# 所以集合就是 build_arc_patch.py 编译进 sdl3 的全部内容 —— 每一个类，
+# 包括那些我们从未碰过源码、
+# 但因为同属一个模块而被重新编译的类。
 SDK_MIN_EXPECTED = 20
 
-# Present in the new code, absent from upstream. Checked here as a last gate so a
-# jar built from stale class files cannot be shipped silently -- build_arc_patch
-# checks the same markers, but it checks what it compiled, not what we packed.
+# 新代码里有、上游没有。这里作为最后一道关卡检查，防止用过期 class 文件
+# 构建出的 jar 被悄悄发出去 —— build_arc_patch
+# 也查同样的标记，但它查的是自己编译出来的东西，不是我们打包的东西。
 MARKERS = {
     "arc/graphics/gl/GLVersion.class": [b"(Ljava/lang/CharSequence;)Z"],
     "arc/graphics/gl/Shader.class": [b"GLVersion$GlType"],
@@ -91,30 +91,30 @@ MARKERS = {
     "arc/backend/sdl/SdlInput.class": [b"MAX_TOUCH_POINTERS", b"pointerJustDown",
                                        b"syncMouseToFinger"],
     "arc/backend/sdl/SdlFiles.class": [b"arc.sdl.chooserPath", b"chooserPath"],
-    # Added 2026-09-28 after the device build that failed on exactly this class:
-    # our SdlApplication reads config.appName, and only OUR SdlConfig declares it.
-    # Upstream's SdlConfig has no such field, so the name is a marker.
+    # 2026-09-28 加入：真机构建正好在这个类上失败 ——
+    # 我们的 SdlApplication 会读 config.appName，而只有【我们的】SdlConfig 声明了它。
+    # 上游的 SdlConfig 没有这个字段，所以这个名字本身就是标记。
     "arc/backend/sdl/SdlConfig.class": [b"appName"],
-    # Three classes exist in our backend and not in upstream's at all, so their
-    # presence in the jar is itself the check -- there is no marker to look for.
-    # Named here so the omission is a decision rather than an oversight.
+    # 有三个类只存在于我们的 backend、上游完全没有，所以它们
+    # 出现在 jar 里本身就是检查 —— 没有标记可查。
+    # 在这里点名，是为了让"不查"是个决定，而不是疏忽。
     #   arc/backend/sdl/GLBootstrap.class
     #   arc/backend/sdl/GLDiag.class
     #   arc/backend/sdl/GLDispatchFix.class
 }
-# Classes that must be in the jar but carry no marker of their own.
+# 必须出现在 jar 里、但自身不带任何标记的类。
 MUST_EXIST = [
     "arc/backend/sdl/GLBootstrap.class",
     "arc/backend/sdl/GLDiag.class",
     "arc/backend/sdl/GLDispatchFix.class",
 ]
 
-# Java 17. The game jar's classes are major 61 and the embedded JVM is 21, so
-# anything else here is a build accident rather than a preference.
+# Java 17。游戏 jar 的类 major 是 61，内嵌 JVM 是 21，所以
+# 这里出现别的值只能是构建事故，而不是偏好。
 WANT_MAJOR = 61
 
-# Fixed, so the same inputs give the same jar. 1980-01-01 is the earliest a DOS
-# timestamp can express and is what reproducible-build tooling conventionally uses.
+# 固定值，让同样的输入产出同样的 jar。1980-01-01 是 DOS 时间戳能表达的
+# 最早时间，也是可复现构建工具惯用的取值。
 FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
 
@@ -135,10 +135,10 @@ def collect():
             n += 1
     if n == 0:
         raise SystemExit("目录里没有 .class: %s" % SDK_DIR_SRC)
-    # A floor, not an equality: the number moves when Arc gains or loses a class,
-    # and pinning it exactly would make a legitimate upstream change look like a
-    # build failure. What it catches is the failure that actually happened -- a
-    # directory that had been narrowed down to three edited files.
+    # 这是下限，不是相等判定：Arc 增删类时这个数字会变，
+    # 把它钉死会把一次正常的上游变更显得像构建失败。
+    # 它真正要抓的是实际发生过的那次失败 ——
+    # 一个被压缩成三个改动文件的目录。
     if n < SDK_MIN_EXPECTED:
         raise SystemExit("只找到 %d 个 backend 类，少于 %d —— 目录像是被截断了。"
                          "backend-sdl3 是【整个】被替换的，先跑 build_arc_patch.py"
@@ -162,9 +162,9 @@ def main():
     entries = collect()
     print("要打包的类 = %d 个" % len(entries))
 
-    # Gate 1: every class is Java 17 bytecode. A class compiled for the wrong
-    # release only fails on the device, and it fails as a version error that says
-    # nothing about which step produced it.
+    # 关卡 1：每个类都是 Java 17 字节码。编译到错误 release 的类
+    # 只会在真机上失败，而且报出来的是一个版本错误，
+    # 完全看不出是哪个步骤产生的。
     bad = []
     for name in sorted(entries):
         blob = open(entries[name], "rb").read()
@@ -181,8 +181,8 @@ def main():
         return 1
     print("字节码版本：全部 major=%d OK" % WANT_MAJOR)
 
-    # Gate 2: the markers. This is what separates "built from the patched sources"
-    # from "built from whatever was on disk".
+    # 关卡 2：标记。这是用来区分"从打过补丁的源码构建"和
+    # "从磁盘上随便什么东西构建"的。
     for name, markers in MARKERS.items():
         if name not in entries:
             print("FAIL 标记清单里的 %s 不在要打包的集合中" % name)
@@ -194,8 +194,8 @@ def main():
                 return 1
     print("改动标记：%d 个类逐个命中 OK" % len(MARKERS))
 
-    # Gate 3: the classes that exist only in our backend. A marker check cannot
-    # cover these -- they are new, so there is nothing to compare against.
+    # 关卡 3：只存在于我们 backend 的类。标记检查覆盖不到这些 ——
+    # 它们是新增的，没有可比对的东西。
     for name in MUST_EXIST:
         if name not in entries:
             print("FAIL %s 不在要打包的集合中（我们的 backend 应该比上游多这三个类）" % name)
@@ -212,8 +212,8 @@ def main():
         return 0
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    # Write to a temporary name and move into place, so a failure part-way cannot
-    # leave a truncated jar where the launcher will find it.
+    # 先写到临时名字再移到位，这样中途失败不会留下一个被截断的 jar
+    # 躺在启动器能找到的地方。
     tmp_jar = OUT_JAR + ".tmp"
     if os.path.exists(tmp_jar):
         os.remove(tmp_jar)
@@ -225,8 +225,8 @@ def main():
             with open(entries[name], "rb") as f:
                 z.writestr(zi, f.read())
 
-    # Read the jar back and check what actually landed, rather than trusting the
-    # write. Same reason verify_hap.py re-reads the HAP.
+    # 把 jar 读回来、检查实际落盘的内容，而不是相信写入成功。
+    # 与 verify_hap.py 重新读取 HAP 是同样的理由。
     with zipfile.ZipFile(tmp_jar) as z:
         got = sorted(z.namelist())
     want = sorted(entries)

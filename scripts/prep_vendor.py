@@ -55,16 +55,16 @@ PROJECT_ROOT = config.PROJECT_ROOT
 CPP = config.CPP
 LIBS = config.LIBS
 JDK_SERVER = os.path.join(LIBS, "jdk21", "lib", "server")
-PAD_DIR = os.path.join(HERE, "_anchorpad")          # host-only scratch, not shipped
+PAD_DIR = os.path.join(HERE, "_anchorpad")          # 仅主机用的临时目录，不随包发布
 
 SDK = config.NATIVE_SDK
 CLANG = config.CLANG
 SYSROOT = config.SYSROOT
 
-# the unmodified libjvm as it comes out of the JDK
+# 未经修改的 libjvm，直接来自 JDK
 SRC_JVM = config.SRC_JVM
 
-# where the real JVM has to end up ON DEVICE -- its length is what we must match
+# 真正的 JVM 在【设备上】必须落到的位置 —— 它的长度就是我们必须匹配的
 DEVICE_JVM = "/data/storage/el1/bundle/libs/arm64/jdk21/lib/server/libjvm_real.so"
 
 
@@ -97,8 +97,8 @@ def build_anchor_padded():
     if not os.path.isfile(src):
         raise SystemExit("missing %s" % src)
 
-    # a placeholder library whose PATH (as given to the linker) has the same
-    # length as the device path we actually want in DT_NEEDED
+    # 一个占位库，它（传给链接器时）的路径长度与我们真正想
+    # 写进 DT_NEEDED 的设备路径相同
     pad = os.path.join(PAD_DIR, "p" * max(1, len(DEVICE_JVM) - len(PAD_DIR) - 1))
     pad = pad[:len(DEVICE_JVM)]
     if len(pad) != len(DEVICE_JVM):
@@ -113,9 +113,9 @@ def build_anchor_padded():
     print("   pad target : %s (%d chars)" % (pad, len(pad)))
 
     anchor = os.path.join(LIBS, "libjvm.so")
-    # --no-as-needed so the DT_NEEDED is recorded even though no symbol from the
-    # pad object is referenced. No -soname: that way the linker records the PATH
-    # we passed rather than a soname.
+    # 用 --no-as-needed，这样即使没有引用 pad 目标文件里的任何符号，
+    # DT_NEEDED 也会被记录。不加 -soname：这样链接器记录的是
+    # 我们传入的路径，而不是 soname。
     run([CLANG, "--target=aarch64-linux-ohos", "--sysroot=" + SYSROOT,
          "-shared", "-fPIC", "-o", anchor, src,
          "-Wl,--no-as-needed", pad, "-Wl,--as-needed"])

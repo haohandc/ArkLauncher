@@ -62,14 +62,14 @@ def main():
                 continue
             checked += 1
             for line in dynamic_entries(p):
-                # pull the bracketed value, if any
+                # 取出方括号里的值（如果有）
                 if "[" not in line or "]" not in line:
                     continue
                 val = line[line.index("[") + 1:line.rindex("]")]
                 if val.startswith(OK_PREFIX):
                     continue
-                # a separator in a NEEDED/SONAME name means the loader will treat
-                # it as a path -- which is only sane if it is a device path
+                # NEEDED/SONAME 名字里带分隔符，说明加载器会把它当成路径 ——
+                # 这只有在它是设备路径时才合理
                 if "/" in val or os.sep in val or ":" in val:
                     print("  !! %s" % p.replace(HERE + os.sep, ""))
                     print("       %s" % line)

@@ -1,57 +1,57 @@
 package com.haohandc.launcher;
 
 /**
- * Loading a library on the launcher's behalf, from a class the application class
- * loader owns.
+ * 替启动器加载一个库，发起者是一个由应用类加载器
+ * 自己所拥有的类。
  *
- * WHY THIS CLASS EXISTS
+ * 这个类为什么存在
  *
- * Runtime.load0() picks the loader that a native library is registered against
- * like this:
+ * Runtime.load0() 挑选一个原生库所注册到的加载器，
+ * 方式如下：
  *
  *     ClassLoader loader = (fromClass == null) ? null : fromClass.getClassLoader();
  *     NativeLibraries libs = libsFor(loader);
  *
- * and System.load() obtains fromClass from the caller frame, because it is
- * annotated @CallerSensitive.
+ * 而 System.load() 从调用者栈帧取得 fromClass，因为它
+ * 带有 @CallerSensitive 注解。
  *
- * The launcher calls it through JNI, and a JNI call has no Java caller frame. So
- * fromClass comes out null, the library is registered against the BOOTSTRAP
- * loader (null), and every class loaded by the application loader then fails to
- * find its native methods -- even though the library loaded without error:
+ * 启动器通过 JNI 调用它，而 JNI 调用没有 Java 调用者栈帧。所以
+ * fromClass 出来是 null，库被注册到 BOOTSTRAP（引导）
+ * 加载器（null）上，于是应用加载器加载的每个类都找不到
+ * 它的 native 方法 —— 即便库本身毫无错误地加载了：
  *
  *     java.lang.UnsatisfiedLinkError:
  *         'int arc.util.NativeUtils.setEnv(java.lang.String, java.lang.String, boolean)'
  *         at arc.util.NativeUtils.setEnv(Native Method)
  *         at arc.backend.sdl.SdlApplication.init(SdlApplication.java:125)
  *
- * Both halves of that message are true and they look contradictory until the
- * loader is taken into account: the library IS loaded, just not for the classes
- * that need it.
+ * 那条消息的两半都是真的，在把加载器考虑进来之前它们看起来
+ * 自相矛盾：库确实已加载，只是并非为那些需要它的
+ * 类加载。
  *
- * Calling System.load from here fixes it, because this class is loaded by the
- * same application class loader as the game, so the library lands in the same
- * place and the symbols resolve.
+ * 从这里调用 System.load 就能修好，因为本类由与该游戏相同的
+ * 应用类加载器加载，于是库落在同一个
+ * 位置，符号得以解析。
  *
- * Kept in its own jar rather than injected into the game jar, so that the game
- * jar stays the exact artifact it was verified as.
+ * 保持独立成 jar，而不是注入游戏 jar，这样游戏
+ * jar 就仍是那个经过验证的、原封不动的产物。
  */
 public final class NativeLoader {
 
     private NativeLoader() {
     }
 
-    /** System.load with this class as the caller, so the loader is the right one. */
+    /** System.load，以本类作为调用者，这样加载器才是对的那个。 */
     public static void load(String absolutePath) {
         System.load(absolutePath);
     }
 
     /**
-     * Tell Arc a native is already loaded, so its own loader does not try.
+     * 告诉 Arc 某个原生库已加载，好让它自己的加载器不再尝试。
      *
-     * SharedLibraryLoader.setLoaded is public and static, and load(String)
-     * returns immediately for a name that has been marked. Reached reflectively
-     * because this jar deliberately has no compile-time dependency on the game.
+     * SharedLibraryLoader.setLoaded 是 public static 的，而 load(String)
+     * 对一个已被标记的名字会立即返回。以反射方式触达，
+     * 因为本 jar 刻意不对游戏保留任何编译期依赖。
      */
     public static void markLoaded(String name) throws Exception {
         Class.forName("arc.util.SharedLibraryLoader")

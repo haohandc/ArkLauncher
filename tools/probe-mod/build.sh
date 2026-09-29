@@ -1,19 +1,19 @@
 #!/bin/bash
-# Build the probe mod jar -- the artifact that answers one question:
-#   can a class loaded at runtime out of a mod jar be defined and executed
-#   under this launcher's JVM?
+# 构建 probe mod jar -- 用来回答一个问题的产物：
+#   运行时从 mod jar 里加载的类，能否在这个启动器的
+#   JVM 下被定义并执行？
 #
-# WHY IT IS BUILT AGAINST THE GAME JAR
-#   Mindustry checks, at load time, that the mod's superclass came from the SAME
-#   class loader as mindustry.mod.Mod, and refuses the mod if it did not
+# 为什么它要针对游戏 jar 构建
+#   Mindustry 在加载时检查 mod 的父类是否来自与
+#   mindustry.mod.Mod 相同的类加载器，不一致就拒绝该 mod
 #   ("This mod/plugin has loaded Mindustry dependencies from its own class
-#   loader..."). So mindustry.jar must be a COMPILE-time dependency and must NOT
-#   end up inside the output. That is why the classpath is passed to javac and
-#   the jar is assembled from the class files alone -- never from the classpath.
+#   loader..."). 因此 mindustry.jar 必须是 COMPILE-time 依赖，绝不能
+#   进入产物内部。这就是为什么 classpath 传给 javac，
+#   而 jar 只由 class 文件组装 -- 从不来自 classpath。
 #
-# Output: tools/probe-mod/out/probe-mod.jar
+# 输出：tools/probe-mod/out/probe-mod.jar
 #
-# Usage:
+# 用法：
 #   bash tools/probe-mod/build.sh
 
 set -o pipefail
@@ -35,8 +35,8 @@ rm -rf "$OUT"
 mkdir -p "$CLASSES"
 
 echo "=== compiling (against the game jar, so this must match its bytecode level) ==="
-# The game is Java 17 (class file major 61). --release 17 keeps the probe at the
-# same level; a newer level would be refused at load time with no useful message.
+# 游戏是 Java 17（class file major 61）。--release 17 让 probe 保持
+# 同一级别；更高的级别会在加载时被拒绝，且没有有用的报错。
 "$JAVAC" --release 17 -cp "$GAME_JAR" -d "$CLASSES" "$SRC" || exit 1
 echo "   ok"
 
@@ -53,12 +53,12 @@ echo "   $OUT/probe-mod.jar   $(stat -c%s "$OUT/probe-mod.jar") B"
 echo "   sha256 $(sha256sum "$OUT/probe-mod.jar" | cut -d' ' -f1)"
 
 # ---------------------------------------------------------------------------
-# GATE: the output must NOT contain any Mindustry classes.
+# 门禁：产物绝不能包含任何 Mindustry 类。
 #
-# javac is given the game jar on its classpath, and it would be an easy mistake
-# to later "simplify" this script into packaging the classpath into the jar. The
-# game refuses such a mod by name, but it refuses it AT RUNTIME on the device,
-# which costs a build and a 171 MB install to discover. Check it here instead.
+# javac 的 classpath 上带着游戏 jar，之后很容易犯一个错，
+# 就是把这脚本 "简化" 成把 classpath 打包进 jar。
+# 游戏会指名拒绝这样的 mod，但它是在设备上 RUNTIME 拒绝的，
+# 发现这一点要花一次构建和 171 MB 的安装。不如在这里就检查。
 # ---------------------------------------------------------------------------
 echo
 if "$JAR" --list --file "$OUT/probe-mod.jar" | grep -qE '^(mindustry|arc|rhino)/'; then
@@ -69,27 +69,27 @@ fi
 echo "   gate: no game classes bundled"
 
 # ---------------------------------------------------------------------------
-# THIS NO LONGER INSTALLS ANYTHING INTO THE BUNDLE, and that is the change.
+# 它不再往 bundle 里装任何东西，这就是本次改动。
 #
-# It used to copy the jar to entry/libs/arm64-v8a/probe/probe-mod.jar.so, from
-# where ArkTS (seedProbeMod in Index.ets) copied it into the game's mods
-# directory at every launch. BOTH HALVES ARE GONE:
+# 它曾把 jar 复制到 entry/libs/arm64-v8a/probe/probe-mod.jar.so，
+# 再由 ArkTS（Index.ets 里的 seedProbeMod）在每次启动时把它复制进
+# 游戏的 mods 目录。两部分都已移除：
 #
-#   * the seeding was an UNCONDITIONAL overwrite at every launch, so deleting
-#     probe-mod.jar in the game put it back -- the same defect as the folder scan
-#     and the floating ball's import row, all three removed together.
-#   * with nothing copying it out, installing it into libs/ only ships 1.2 KB of
-#     unused jar inside every HAP.
+#   * 播种是每次启动时的无条件覆盖，所以在游戏里删掉
+#     probe-mod.jar 它会自己回来 -- 与文件夹扫描和
+#     悬浮球的导入行同样的缺陷，三者一起被移除。
+#   * 既然没东西把它复制出去，装进 libs/ 只会让每个 HAP 多带 1.2 KB
+#     无用的 jar。
 #
-# The build itself still works and still gates the result, so this remains the
-# description of how the probe is made. To use one now, copy the jar below into
-# the game's mods directory by hand (through the game's own import button), or
-# restore the seeding from git history if an automatic planting is really wanted
-# again.
+# 构建本身仍可用且仍会对结果设门禁，所以这依然是
+# 关于 probe 如何制作的说明。现在要用的话，手工把下面这个 jar 复制进
+# 游戏的 mods 目录（通过游戏自带的导入按钮），或者
+# 如果确实还想要自动投放，就从 git 历史里恢复播种
+# 逻辑。
 #
-# ⚠️ Do not re-add the copy into libs/ without also deciding what happens when
-#    the player deletes the mod. The old answer was "it comes back", and that is
-#    the answer the whole importer was removed for.
+# ⚠️ 不要重新加回复制到 libs/ 的逻辑，而不先决定当
+#    玩家删掉 mod 时该怎么办。旧答案是 "它会回来"，
+#    整个导入器就是为这个答案被移除的。
 # ---------------------------------------------------------------------------
 echo
 echo "   built -> $OUT/probe-mod.jar"

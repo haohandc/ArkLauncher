@@ -76,9 +76,9 @@ import config  # noqa: E402
 JDK = os.path.join(config.LIBS, "jdk21")
 DEST = os.path.join(config.LIBS, "jdkhome")
 
-# The subtrees of the JDK that <java.home> lookups reach into, given as path
-# components so the same tuple is both the JDK-relative source and the
-# java.home-relative destination. Order is not significant.
+# <java.home> 查找会触及的 JDK 子树，以路径组件给出，这样同一个元组
+# 既是相对 JDK 的源，又是相对 java.home 的目标。
+# 顺序无关紧要。
 TREES = [
     ("conf",),
     ("lib", "security"),
@@ -147,10 +147,10 @@ def main():
         print("jdkhome: %d file(s), all match the JDK" % len(plan))
         return 0
 
-    # Rebuilt from scratch rather than merged. A stale file left behind by a
-    # previous revision would be copied onto the device and would look exactly
-    # like a current one -- the same "path did not change, contents did" trap
-    # this project has hit before.
+    # 从头重建而不是合并。上一版遗留下来的过期文件
+    # 会被拷贝到设备上，并且看起来与当前版完全一样 ——
+    # 就是这个项目以前踩过的那种“路径没变、内容却变了”
+    # 的陷阱。
     if os.path.isdir(DEST):
         shutil.rmtree(DEST)
 
