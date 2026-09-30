@@ -142,16 +142,21 @@ tryopts.sh
 # the Releases page, never in git; see the note on entry/libs above).
 dist/
 
-# Scratch from crash investigations: pulled faultlogs, sandbox backups, kept
-# packages, extracted sections. All of it is derived from a device or a build and
-# none of it belongs in the repository -- and a `git add -A` after an
-# investigation should not be able to sweep it in.
+# Scratch from crash investigations: pulled faultlogs, sandbox logs, sandbox
+# backups, kept packages, extracted sections. All of it is derived from a device
+# or a build and none of it belongs in the repository -- and a `git add -A` after
+# an investigation should not be able to sweep it in.
 _faultlog_*/
 _fl[0-9]/
 _keep/
 _sects/
 _sandbox_backup_*/
 _crash_*.log
+# stderr.log/stdout.log pulled from a device. These are evidence for the rule
+# that "probe = 42 means the JVM was created, -1 means create() never returned",
+# so they are kept on disk on purpose -- but they are a device's output, not
+# source, and two local copies of the same run are not worth a commit.
+_stderr_*.log
 
 # tools/probe-mod/build.sh output -- regenerated, and it is copied into
 # entry/libs/ (also ignored) where the bundle picks it up.
