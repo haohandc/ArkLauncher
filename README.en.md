@@ -6,10 +6,15 @@ Run **Mindustry** on HarmonyOS / OpenHarmony, using a self-built launcher instea
 of an existing emulation layer.
 
 The launcher embeds a JDK, creates a JVM from native code, and hands the game a
-real SDL3 window. This repository is the launcher. **Mindustry's own code is
-loaded unmodified**; what gets patched is the framework underneath it — four of
-Arc's backend classes are recompiled and written into the jar, because that is
-where the platform-specific work lives.
+real SDL3 window. This repository is the launcher.
+
+**The game itself is the upstream release — byte for byte, modified in no way.**
+What gets patched is the framework underneath it: **26 Arc classes** — all 18 of
+upstream's `arc/backend/sdl/`, plus five classes that exist only in this build
+(`GLBootstrap` and friends), plus three under `arc/graphics/gl/` — are recompiled
+into **a patch jar of their own**, loaded ahead of the game.
+⚠️ The patch has to come **first** on the class path — JVM resolution takes the
+first match, so the other order makes the patch silently do nothing.
 
 > **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry
 > project or Anuken. See [THIRD-PARTY.md](THIRD-PARTY.md).
@@ -41,7 +46,7 @@ in the store**: a store (release) signature never gets it. ⚠️ **HarmonyOS 5 
 | Save import/export | Via the app's folder in Download. ⚠️ **Whether the game's own browser can read that path is not yet verified** -- it uses a path through libc, while the app's grant is held per URI -- see [limitations](docs/LIMITATIONS.md) |
 | Mods | Work. Import them with the **game's own "import mod" button** — that is the only way in, and it needs no restart. The app deliberately does **not** take files from Downloads by itself; drop one in `Download/com.haohandc.mindustryark/` and pick it in that browser. See [limitations](docs/LIMITATIONS.md) |
 | Desktop/mobile mode switch | Switches, but needs an app restart — see the [FAQ](docs/FAQ.md) |
-| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. ⚠️ **But no actual multiplayer match has been tried yet** |
+| Networking / multiplayer | **The platform side works** — `socket`, `epoll`, DNS, TCP, TLS and HTTP all measured working here. **LAN, public-server search and hosting on the device have each been tested.** ⚠️ **But a full multiplayer match has not been played through** |
 
 ## How to download and install
 
@@ -103,7 +108,7 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 ## Credits
 
 - [**Mindustry**](https://github.com/Anuken/Mindustry) — by Anuken, the game, **loaded unmodified**
-- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; `arc/backend/sdl/**` and `arc/graphics/gl/**` carry patches for this platform
+- [**Arc**](https://github.com/Anuken/Arc) — by Anuken, the game framework; `arc/backend/sdl/**` and `arc/graphics/gl/**` carry patches for this platform, **in a separate jar rather than written into the game**
 - [**SDL3**](https://github.com/libsdl-org/SDL) — the windowing / input / audio layer
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) — the JNI bindings for OpenGL and SDL
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) — the runtime

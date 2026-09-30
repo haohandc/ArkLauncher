@@ -5,8 +5,13 @@
 在 **HarmonyOS / OpenHarmony** 上运行 **Mindustry**，使用自建启动器，而不是套一层现成的模拟层。
 
 启动器内嵌一套 JDK，从 native 代码创建 JVM，再把一个真正的 SDL3 窗口交给游戏。
-本仓库就是这套启动器。**Mindustry 自身的代码未经修改**；被改动的是它下层的框架 ——
-Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造都在那里。
+本仓库就是这套启动器。
+
+**游戏本体是上游原版 —— 与官方发布的那份文件逐字节相同，未做任何修改。**
+平台相关的改造都在它下层的框架里：**26 个 Arc 类** —— `arc/backend/sdl/` 上游那 18 个
+**全部覆盖**，另加 5 个只存在于本构建的类（`GLBootstrap` 等），再加 `arc/graphics/gl/`
+的 3 个 —— 重新编译后装进**一份独立的补丁 jar**，在游戏之前加载。
+⚠️ 补丁必须在 classpath 上**排在游戏前面** —— JVM 取第一个匹配，顺序反了补丁会静默失效。
 
 > **非官方项目。** 与 Mindustry 项目及 Anuken 无隶属关系，未获其认可或支持。
 > 详见 [THIRD-PARTY.md](THIRD-PARTY.md)。
@@ -35,7 +40,7 @@ Arc 的四个后端类被重新编译后写回 jar，因为平台相关的改造
 | 存档导入导出 | 走「下载」里的应用文件夹往返。⚠️ **游戏的浏览器能否读那个路径尚未验证**（它走 libc 用路径，而应用的授权是按 URI 持有的）—— 见[已知限制](docs/LIMITATIONS.md) |
 | 模组 | 可用。用**游戏自带的「导入模组」按钮**导入 —— 这是**唯一**入口，且不用重启。应用**故意不**自己去 Download 里收文件：把文件放进 `Download/com.haohandc.mindustryark/` 后，在那个浏览器里**选一下**即可。见[已知限制](docs/LIMITATIONS.md) |
 | 桌面 / 移动模式切换 | 可切换，但**需要重启应用** —— 见[常见问题](docs/FAQ.md) |
-| 网络 / 联机 | **平台层面已通**（`socket` / `epoll` / DNS / TCP / TLS / HTTP 全部实测可用，见下）。⚠️ **但还没实测过一局真实联机** |
+| 网络 / 联机 | **平台层面已通**（`socket` / `epoll` / DNS / TCP / TLS / HTTP 全部实测可用）。**局域网、公网服务器搜索、在本机开服三项均已实测**。⚠️ **但还没打完过一局真实的多人对局** |
 
 ## 如何下载、安装
 
@@ -93,7 +98,7 @@ Copyright (C) 2026 Haohandc and contributors.
 ## 致谢
 
 - [**Mindustry**](https://github.com/Anuken/Mindustry) —— Anuken 开发，游戏本体，**加载时未做修改**
-- [**Arc**](https://github.com/Anuken/Arc) —— Anuken 开发的游戏框架；`arc/backend/sdl/**` 与 `arc/graphics/gl/**` 带有本平台补丁
+- [**Arc**](https://github.com/Anuken/Arc) —— Anuken 开发的游戏框架；`arc/backend/sdl/**` 与 `arc/graphics/gl/**` 带有本平台补丁，**这些补丁装在独立 jar 里，不写进游戏本体**
 - [**SDL3**](https://github.com/libsdl-org/SDL) —— 窗口 / 输入 / 音频层
 - [**LWJGL**](https://github.com/LWJGL/lwjgl3) —— OpenGL 与 SDL 的 JNI 绑定
 - [**OpenJDK 21**](https://github.com/openjdk/jdk) —— 运行时
