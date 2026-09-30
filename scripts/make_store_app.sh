@@ -73,7 +73,7 @@
 # 自己声称哪些平台的地方，不应该让一个默认值
 # 来回答这个问题。
 #
-# 输出：dist/store/MindustryArk-<mode>.app
+# 输出：dist/store/MindustryArk-<version>-<mode>.app
 
 set -o pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -111,7 +111,13 @@ MODJSON="entry/src/main/module.json5"
 PERM="ohos.permission.kernel.ALLOW_WRITABLE_CODE_MEMORY"
 BUILT_APP="build/outputs/release/MindustryArk-release-signed.app"
 OUTDIR="dist/store"
-OUTAPP="$OUTDIR/MindustryArk-$MODE.app"
+# 文件名带版本，与 dist/ 里的其他产物一致（HAP 与 payload 都带版本）。
+# 以前不带：商店包在同一目录里靠"只有一个"来区分，一旦两个版本并存，
+# 名字完全一样，就只能靠哈希去认 -- 而上传时看的就是文件名。
+# 版本从 config.py 取（它在 import 时就自检 APP_VERSION 与 VERSION_CODE 一致），
+# 不在这里手写，免得像别处手抄的版本号那样悄悄过期。
+ARTIFACT="$("${PY[@]}" -c 'import sys;sys.path.insert(0,"scripts");import config;print(config.ARTIFACT_NAME)')" || exit 1
+OUTAPP="$OUTDIR/$ARTIFACT-$MODE.app"
 BACKUP="${TEMP:-/tmp}/module.json5.pre-store"
 
 echo "############ store build: mode = $MODE ############"
@@ -292,7 +298,7 @@ grep -Ei "BUILD (SUCCESSFUL|FAILED)" /tmp/store_app.log | head -1
 # 让构建树保持 hvigor 留下的样子。
 # ---------------------------------------------------------------------------
 echo
-echo "############ keeping the artifact as MindustryArk-$MODE.app ############"
+echo "############ keeping the artifact as $ARTIFACT-$MODE.app ############"
 if [ ! -f "$BUILT_APP" ]; then
     echo "!! the build reported success but there is no .app at $BUILT_APP" >&2
     echo "!! do not go looking for an older one -- that is how a stale package gets" >&2
