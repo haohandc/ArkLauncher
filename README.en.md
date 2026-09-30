@@ -115,9 +115,5 @@ Per-component obligations are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
 Licensing and redistribution terms for each are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
-Most of the code in this repository was written with AI assistance
-(Claude via Cherry Studio, model deepseek-flash v4.1). The measurements, the
-device testing and the decisions about what to do when a measurement disagreed
-with an assumption were reviewed against primary sources throughout; the
-interesting failures are documented in the source comments, including the ones
-that were my fault.
+Most of the code, phrases and documents in this repository was written with AI assistance
+(Claude via Cherry Studio, model deepseek-flash v4.1). 
