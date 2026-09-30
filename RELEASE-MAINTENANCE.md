@@ -472,6 +472,29 @@ downloadable today, and today the store build is not.
 
 ### 2.10 The AppGallery rejection was the intermittent crash, not a release-only one
 
+> ## ⛔⛔ THIS TITLE IS WRONG — CORRECTED 2026-09-25 (kept for the record)
+>
+> **The rejection was NOT this crash.** It was **2.11** — a release-signed package cannot get
+> executable memory, so `JNI_CreateJavaVM` never returns and the app dies at launch. The
+> reviewer's 「游戏闪退，影响用户体验」 on a **Mate 60 (phone)** matches 2.11, not this section.
+>
+> What this section describes is **2.10's own SIGSEGV**, and the user's correction is that
+> **「游戏自始至终都是可以玩的」** — the app is playable throughout. Measured 2026-09-25:
+> a process with a `cppcrash` record for `Pid=49001` was **still alive afterwards** (`pidof`
+> still returned 49001), and `stderr.log` contains the string `SIGSEGV` **0 times** — i.e. this
+> project's own SIGSEGV handler was **never called**. HotSpot caught the fault itself; DFX
+> logged it before handing it on.
+>
+> ⇒ So this is a **DFX-record** problem (every run leaves a crash entry, which looks bad in a
+> submission and clutters your own logs), **not a user-visible defect** and **not the rejection**.
+>
+> ⭐ `MindustryArk-功能路线图.md:912` already said this correctly at the time
+> (「但它**不是**本次驳回的原因……与 **2.11** 的启动卡死吻合」). **That line is right and this
+> title was wrong.**
+>
+> The text below is left unedited. Its *data* (the 16-record table) is still valid and useful;
+> only the attribution in the title and closing paragraphs is superseded.
+
 ⚠️⚠️ **THIS SECTION REPLACES A WRONG CONCLUSION.** An earlier version of it said the store
 package crashed because the native code was optimised, and that building with `-O0` fixed it.
 **That was wrong**, an invalid experiment produced it, and the `-O0` change has been reverted.
@@ -499,6 +522,9 @@ grouped:
 aside -- the one the report of 2026-09-21 called 「不重要，我没遇到过任何真实闪退」. The
 difference now is only that an AppGallery reviewer met it, and for a submission an
 intermittent crash is a rejection rather than an annoyance.
+
+> ⛔ **Superseded 2026-09-25:** the reviewer did **not** meet this one. See the correction at the
+> top of 2.10 — the rejection was 2.11, and the user confirms the game is playable throughout.
 
 #### Why the first conclusion was wrong, and why the experiment lied
 
@@ -2147,7 +2173,27 @@ Everything on the checklist above, run on the published pair:
 | payload vs `entry/libs/` | **104 ↔ 104**, zero difference either way; `testzip` clean |
 | payload REQUIRED entries | all 5 present |
 | shared binaries, HAP vs payload | **73 shared, 0 byte-differing** |
-| `scripts/check_sources_ascii.py` | OK, 3 sources pure ASCII |
+| ~~`scripts/check_sources_ascii.py`~~ | ⛔ **WITHDRAWN 2026-09-28** — see below. It passed on this release; it no longer means anything |
+
+⚠️ **`scripts/check_sources_ascii.py` HAS BEEN DELETED, AND THIS ROW IS ITS TOMBSTONE.**
+
+It enforced "our C sources must be pure ASCII", on the stated grounds that clang decodes
+them as GBK on a Chinese Windows machine and a UTF-8 comment could end a block early. That
+reasoning was measured on 2026-09-28 and **does not hold**: seven boundary spellings, then an
+exhaustive sweep of all 182 non-ASCII characters that appear in the `.ets` files (each placed
+immediately before a `*/`), compiled with the project's **real** command line taken from
+`entry/.cxx/.../compile_commands.json` — 182/182 closed correctly, and an A/B against the
+English backup of the same file produced an **identical diagnostic set**. The six source files
+were then translated to Chinese throughout, and the build passed.
+
+So the gate was enforcing a rule that is not true, and by 2026-09-28 it was failing on
+**correct** files — `launcher.c` and `shield.c`, hundreds of lines each — which is the defect
+this project already has a lesson for: **a check that fails on a good tree is the same defect
+as one that passes on a broken one.** It was also the only thing that ever caught the four
+occasions a warning sign was typed into a C comment, so deleting it does give up a real (if
+now unnecessary) safety net. Nothing replaces it; the rule it protected is simply gone. The
+Chinese comments in those files are correct as they stand.
+
 
 ⚠️ **Two path-prefix mistakes were made while producing the two set comparisons above,
 and both produced a confident wrong answer.** The HAP spells its entries
