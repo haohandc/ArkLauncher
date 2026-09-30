@@ -105,6 +105,4 @@ Copyright (C) 2026 Haohandc and contributors.
 
 各组件许可证与再分发条款见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
-本仓库大部分代码由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
-所有测量、真机测试，以及「当测量结果与假设冲突时如何取舍」的判断，都全程对照**一手来源**复核过；
-源码注释里记着那些有意思的失败 —— **包括我自己造成的那几个**。
+本仓库大部分代码、文档和文字主要由 AI 辅助完成（Claude via Cherry Studio，模型 deepseek-flash v4.1）。
