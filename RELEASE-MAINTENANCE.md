@@ -2212,3 +2212,42 @@ self-signed channel depends on it, see 2.12) and exactly one permission, `INTERN
 mismatch with the release notes' device table, which lists tablet / phone / PC·2in1; it is
 harmless (a TV cannot get the ACL either) and was left alone rather than trigger a rebuild
 of an already-published artifact.
+
+---
+
+### Verified as published — v1.1.0.1, 2026-09-30
+
+| | |
+|---|---|
+| Release id | `400036952` |
+| Tag | `v1.1.0.1` = **`61755627d2b704e99ee819660fa801d1fe96b0bf`** — the tip of the ten-commit batch |
+| Pre-release | ⛔ **NOT set — the first time.** Every earlier release carried it |
+| Assets | **two**, and neither is the signed HAP ✅ |
+
+⭐ **The digests were read from the API rather than by re-downloading** — `GET
+/repos/…/releases/tags/v1.1.0.1` returns `asset.digest` as `sha256:<hex>`. ⚠️ This is the
+third release in a row to use that route; the v0.2.0-beta.1 block is the last one that
+actually downloaded. Both digests match the local files exactly, **and so do the byte sizes**:
+
+| Asset | bytes | sha256 (published == local) |
+|---|---|---|
+| `…-1.1.0.1-unsigned.hap` | 275,175,365 | `77930c822bfe5fa89f01e741c2090d4743fb926cf3005c3975b2e2fe3cd710df` |
+| `…-1.1.0.1-payload.zip` | 149,076,464 | `a7e93f960e4c71b0cca5ecffa1f2c0a6dd13e3d2eb0f02da2f3bf1e9895fb59b` |
+
+⚠️ **WHY THE PRE-RELEASE FLAG CAME OFF, AND WHAT IT CHANGED.** All six earlier releases were
+marked pre-release, including the two called RC. Measured consequence: `GET
+/repos/…/releases/latest` returned **404** — GitHub's "latest" is the newest release that is
+not a pre-release, and there were none, so the repository had no "Latest" at all. From
+v1.1.0.1 the flag is off and the same endpoint returns `v1.1.0.1`. It is the maintainer's
+call, on the grounds that this is a small project and a learning exercise rather than a claim
+of production stability.
+
+⭐ **The two axes were separated deliberately.** The **word "RC"** lives in the release title
+and the docs; the **pre-release checkbox** is a GitHub flag. They are independent, and this
+release has neither — the title is `v1.1.0.1 - Mindustry v8 Build 160.5`, and the notes
+describe it as 「架构更新」 rather than as a candidate or as a first stable version. ⚠️ Writing
+"first release" would also have been false: six releases preceded it.
+
+⚠️ **The game version in the title is `160.5`, not `160.4`.** Both RC titles still say
+`Mindustry v8 Build 160.4` because that was true of them; this one ships the upstream jar
+whose sha256 is Anuken's published digest.
