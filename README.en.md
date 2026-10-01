@@ -32,12 +32,12 @@ without wrapping any existing emulation layer.
 
 ⚠️ **The difference, 84.7 MB, equals the game jar's 84.8 MB** — what went away is the game,
 not something else that got trimmed along with it.
-(Upstream `v1.1.0.1` and Ark Launcher `v2.0.0.1`, each from its own
+(Upstream's and Ark Launcher's `v1.2.0.1`, each from its own
 `entry/build/default/outputs/default/`.)
 
 ⇒ ⚠️ **The first launch stops at the launcher screen**, because at that moment there is no jar at all.
 That is by design, not a fault: put Mindustry's `.jar` into the folder the screen shows you →
-tap **Rescan** → select it → tap **Launch Game**.
+pull the list down to refresh → select it → tap **Launch Game**.
 
 ⭐ **Three places hold this line, so it is not a promise:**
 
@@ -62,8 +62,7 @@ item above is a script and not a note to remember.
 ⭐ **The version number is deliberately not in that table — it is not a difference.**
 Ark Launcher only subtracts and adds no features of its own, so **its version tracks upstream's,
 and the two stay on the same number**: upstream bumps, this follows.
-(Right now upstream is `1.1.0.1` and this repository is `2.0.0.1`; upstream is going to the
-same number.)
+(⭐ Both are on `1.2.0.1` now.)
 
 ⚠️ **A different bundle name means a different sandbox — saves, mods and settings are
 【not shared】.** The two apps can sit side by side on one device, fully independent.

@@ -30,10 +30,10 @@ Mindustry Ark 做的是：在 **HarmonyOS / OpenHarmony** 上用自建启动器�
 ⭐ **两个体积都是实测的未签名 HAP**（同一棵源码树、`product=default`、`buildMode=debug`）。
 
 ⚠️ **差额 84.7 MB ≈ 游戏 jar 的 84.8 MB** —— 少掉的正好是游戏，不是别的东西被顺手砍了。
-（上游 `v1.1.0.1` 与 Ark Launcher `v2.0.0.1`，均取自各自 `entry/build/default/outputs/default/`。）
+（上游与 Ark Launcher 的 `v1.2.0.1`，均取自各自 `entry/build/default/outputs/default/`。）
 
 ⇒ ⚠️ **第一次打开会停在启动器界面**，因为此刻一个 jar 都没有。这是设计如此，不是故障：
-把 Mindustry 的 `.jar` 放进界面显示的那个文件夹 → 点「重新扫描」→ 选中它 → 点「启动游戏」。
+把 Mindustry 的 `.jar` 放进界面显示的那个文件夹 → 在列表上下拉刷新 → 选中它 → 点「启动游戏」。
 
 ⭐ **三处守着这条，所以它不是一句承诺：**
 
@@ -56,7 +56,7 @@ Mindustry Ark 做的是：在 **HarmonyOS / OpenHarmony** 上用自建启动器�
 
 ⭐ **版本号不在这张表里 —— 它不是一项差异。** Ark Launcher 只做减法、自身没有新功能，
 所以**版本跟着上游走，两边同号**：上游 bump，它跟着 bump。
-（当前上游是 `1.1.0.1`、本仓库是 `2.0.0.1`；上游会走到同一个号。）
+（⭐ 现在两边**都是** `1.2.0.1`。）
 
 ⚠️ **包名不同 ⇒ 沙箱不同 ⇒ 存档、模组、设置【不共通】。**
 两个应用可以并存在同一台设备上，各自独立。
