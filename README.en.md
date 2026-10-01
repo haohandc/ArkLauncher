@@ -95,8 +95,15 @@ Once installed:
 1. Open the app → you land on the launcher screen
 2. The screen shows a folder path (under Downloads, in this app's own directory)
 3. Using any file manager, copy your `.jar` into that folder
-4. Back in the app, tap **Rescan** → it appears in the list → select it
+4. Back in the app, **pull the list down** to refresh → it appears → select it
 5. Tap **Launch Game**
+
+⭐ **Each row shows the version the jar itself carries** (`v8 Build 160.5`), read out of the jar —
+so you do not have to guess which file is which. A jar that is not a game reads as
+"未知版本" and **stays selectable and launchable**.
+
+⚠️ **Pulling is the main way**; the Rescan button on the Settings tab is kept as a backup
+(for when the gesture does not take).
 
 ⭐ **On a fresh install the very first launch lists your jars correctly** — that was measured
 (see "Unverified"). 📌 It did not on earlier builds: the first launch reported that the folder
@@ -107,11 +114,19 @@ than the screen read it. **Fixed.**
 reinstall, both jars in that folder were **still there, with their original timestamps** —
 reinstalling wipes the **app's own data**, not the folder under Downloads.
 
-After that, every launch goes straight into the game. To switch jars: **floating ball →「Launcher」**.
+By default **every launch stops at this screen first**, and you tap Launch Game. To skip it and
+go straight into the game, turn on the「启动时」switch in Settings. To switch jars:
+**floating ball →「Launcher」**.
 
-⚠️ **There is also a「Try launching anyway」button.** It is an escape hatch: should the
-detection go wrong on some device, it lets you bypass it and get into the game rather than
-being locked out of it forever.
+⚠️ **「Try launching anyway」appears only after a launch has failed** — as a dialog. It is an
+escape hatch: should the detection go wrong on some device, it lets you bypass it and get into
+the game rather than being locked out of it forever.
+📌 On earlier builds it was always present (a line under the Launch button, and a button on the
+Settings tab). That made it read as a statement about *now*, when what it expresses is the
+outcome of *last time*. Changed.
+
+(Also: the Settings tab has an About entry which opens a window with a close button, showing the
+version, this repository's address and upstream's, and the licence note.)
 
 ---
 
@@ -170,6 +185,10 @@ The full list, with the evidence behind each line, is in [docs/LIMITATIONS.md](d
   ⭐ **[measured] Fresh install, first launch, nothing tapped → both jars listed correctly.**
   ⚠️ A blocking wait was deliberately refused: on the picker route the answer may never come,
   and the screen would then never appear. This project has paid for a gate with no way out.
+- ✅ **Pull to refresh and the "无" row were both confirmed on a device** (by the user,
+  2026-10-01). ⚠️ The pull gesture in particular is the one kind of check this project's rules
+  put on the user: anything that needs a tap or a swipe to learn the outcome is theirs, not
+  mine, because the device is in active use.
 - ✅ **A "worse case" this project was worried about did not happen.** It had recorded that the
   platform may refuse to create a directory under Downloads (`EPERM` on tablets). **This
   measurement found that route working** — the folder was created on the very first launch
