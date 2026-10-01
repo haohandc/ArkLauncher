@@ -163,6 +163,22 @@ export struct LauncherHome {
    * 是定位包里那份自带游戏，而本应用不再分发游戏本体。 */
   filesDir: string = '';
 
+  /* [A]
+   * Index.ets 在 Download 那个文件夹确认可用之后把它翻成 true。
+   *
+   * ⚠️ 为什么需要它：那个文件夹是父组件**异步**创建的（mkdir 或 picker，两者都得等），
+   * 而本页的 aboutToAppear 紧接着**同步**跑 —— 全新安装的第一次，读到的状态文件还
+   * 不存在，于是 jarDirHint 是空的。2026-10-01 在 MatePad Pro 上实测复现：
+   * 第一次显示「还没读到文件夹」、同一分钟文件夹才落盘；不点任何东西重启一次即恢复。
+   *
+   * ⇒ 父组件不阻塞地通知一句，这里重读一遍 —— 与按一次「重新扫描」是同一件事。
+   *
+   * ⚠️ 反过来也不行：本页【不能】自己去 ensure，因为那要一个 UIAbilityContext，
+   * 而本组件只拿到了 filesDir 这个字符串（见上面那条关于构造器与 private 的说明）。
+   * 让持有 ctx 的那一层去做，是这里唯一干净的分工。
+   */
+  @Prop @Watch('onFolderSettled') folderSettled: boolean = false;
+
   /** [B] 玩家点了「启动游戏」。参数是最终决定要加载的那个 jar。 */
   onLaunch: (jarPath: string) => void = (jarPath: string) => {};
   /** [B] 玩家点了「仍然尝试启动」—— 逃生门，见下面空状态里的说明。 */
@@ -208,6 +224,23 @@ export struct LauncherHome {
     this.contentPct = readWidthPct(this.filesDir);
     this.sliderPct = this.contentPct;
     this.refresh();
+  }
+
+  /* [A]
+   * 那个文件夹就绪了，重读一遍。
+   *
+   * ⚠️ 只在 true 时重读。父组件只会把它从 false 翻到 true（没有回头路），所以这里的
+   * 判断其实是冗余的 —— 留着是因为「值变了一下就重干活」这个形状如果哪天被改成双向，
+   * 冗余的那一半就成了唯一挡住无谓重读的东西。
+   *
+   * ⚠️ 重读是【幂等】的：refresh() 只是按当前磁盘重新算 games/selected/resolution，
+   * 不写任何东西（writeSelection 只在玩家点选时走）。所以玩家在等待期间已经点过选择，
+   * 也不会被这次重读抹掉 —— 它读的正是玩家那次写下的。
+   */
+  onFolderSettled(): void {
+    if (this.folderSettled) {
+      this.refresh();
+    }
   }
 
   @Builder
@@ -314,9 +347,16 @@ export struct LauncherHome {
           /* [A]
            * 空状态，而它同时是【逃生门】。
            *
-           * 「判定没有游戏」有三个完全不同的来源：真的没有、内置那份的路径我算错了、
-           * 以及那个 Downloads 文件夹在这台设备上还没被创建出来。三者在界面上长得
-           * 一模一样，而其中两个是【我的】问题。
+           * 「判定没有游戏」有两个来源：真的没有；以及那个 Downloads 文件夹
+           * 在【这一刻】还没建出来。后者是本项目 2026-10-01 实测到的首次启动竞态 ——
+           * 文件夹随后就建好了，只是本页读得比它早（一次重启即恢复）。
+           *
+           * ⚠️ 措辞不能把这件事说成设备的问题。它【曾经】写着
+           *   「（这个设备上还拿不到 Download 文件夹）」，而那是不对的：文件夹建出来了，
+           *   是本页读早了。用户指出「这个不太合理」，才有了下面这句。
+           *
+           * ⚠️ 这里【曾经】还有第三个来源：「内置那份的路径我算错了」。Ark Launcher
+           * 不再分发游戏本体之后，那个来源就不存在了 —— 包里没有可算错的东西。
            *
            * ⇒ 所以这里必须能出去：一个「仍然尝试启动」的入口。没有它，一次路径判断
            *   失误就把应用变成永远打不开游戏的启动器，而玩家没有任何办法绕过去。
@@ -329,7 +369,7 @@ export struct LauncherHome {
               .fontSize(13).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
               .textAlign(TextAlign.Center)
-            Text(this.jarDirHint === '' ? '（这个设备上还拿不到 Download 文件夹）' : this.jarDirHint)
+            Text(this.jarDirHint === '' ? '（还没读到文件夹，重开一次应用试试）' : this.jarDirHint)
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
               .margin({ top: 8 })
               .textAlign(TextAlign.Center)

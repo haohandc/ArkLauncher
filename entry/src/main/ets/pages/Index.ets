@@ -563,6 +563,27 @@ struct Index {
    *   · 悬浮球菜单里的「启动器」—— 进了游戏之后还能回来
    */
   @State showLauncher: boolean = false;
+
+  /* [A]
+   * Download 那个文件夹【确认可用】之后翻成 true，传给启动器界面。
+   *
+   * ⚠️ 为什么需要它：那个文件夹是在本页 aboutToAppear 里**异步**创建的
+   * （ensureModFolder 要么 mkdir、要么弹 picker，两者都得等），而启动器界面的
+   * aboutToAppear 紧接着**同步**跑 —— 于是全新安装的第一次，它读到的状态文件还
+   * 不存在。2026-10-01 在 MatePad Pro 上实测复现：第一次显示「还没读到文件夹」，
+   * 而同一分钟 mod_folder 就落盘了；不点任何东西重启一次即恢复。
+   *
+   * ⇒ 父组件不阻塞地通知一句「好了」，启动器再读一遍（等于按一次「重新扫描」）。
+   *
+   * ⚠️ 刻意**不**把关卡设在这里（例如等文件夹好了才挂载启动器界面）：那条路上
+   * picker 可能一直不返回，界面就永远不出来。本项目为「门关上了却没有开的路径」
+   * 付过代价（jvm_incomplete），不再犯 —— **不阻塞比早显示重要**。
+   *
+   * ⚠️ 两个到达顺序都要成立：若它先翻成 true、界面后创建，界面拿到的初值就是
+   * true，aboutToAppear 里那次 refresh() 读到的已经是写好的文件 —— 正确。
+   */
+  @State folderSettled: boolean = false;
+
   /* [B] 传给启动器界面的两个路径。从 context 取一次，因为那是页面才拿得到的东西。 */
   private launcherFilesDir: string = '';
 
@@ -699,6 +720,17 @@ struct Index {
          * 就跳过），而且在没有崩溃时什么都不做 —— 那是正常情况。
          */
         publishCrash(modFolderPath(ctx.filesDir + '/mod_folder'), ctx.filesDir);
+        /* [A]
+         * 文件夹这件事到此为止了，通知启动器界面可以读。
+         *
+         * ⚠️ 放在这个 .then() 的**最末尾**，不是开头：它读的是上面 writeUserDirs
+         * 刚写的桥接文件，所以必须排在它之后。
+         *
+         * ⚠️ 这里【不】判断 showLauncher。启动器界面可能还没被创建（那就用初值
+         * true）、也可能已经在屏幕上（那就触发 @Watch 重读），两种情况都对 ——
+         * 这正是修一个**竞态**时该有的形状：不依赖谁先谁后。
+         */
+        this.folderSettled = true;
       })
       .catch((e: BusinessError) => {
         hilog.warn(DOMAIN, TAG, 'mod folder setup failed: %{public}s', e.message);
@@ -1863,6 +1895,8 @@ struct Index {
     if (this.showLauncher) {
       LauncherHome({
         filesDir: this.launcherFilesDir,
+        /* [B] 见 folderSettled 上的说明：它到位之前，本页读到的是空路径。 */
+        folderSettled: this.folderSettled,
         onLaunch: (jarPath: string) => { this.startGame(jarPath); },
         /* [A] 「仍然尝试启动」：绕开判定，直接进游戏树。它是逃生门 —— 判定没有游戏有
          * 三个来源（真的没有 / 我把路径算错了 / 那台设备上建不出文件夹），而其中两个
