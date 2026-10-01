@@ -41,7 +41,7 @@ import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { uiMaterial } from '@kit.ArkUI';
 import { GameJar, GameResolution, listGameJars, readSelection, writeSelection,
          resolveGame, gameJarDir, ensureGameJarDir,
-         bundledGameVersion, hasBundledGame } from '../games/GameLibrary';
+         bundledGameVersion } from '../games/GameLibrary';
 /* [A] 界面偏好（内容宽度）。单独一个文件，因为它不是「游戏知识」——
  * 理由见那个文件的开头。 */
 import { readWidthPct, writeWidthPct, WIDTH_PCT_MIN, WIDTH_PCT_MAX,
@@ -267,12 +267,23 @@ export struct LauncherHome {
 
   /** [A] 包内那份自带游戏的版本号；读不出时是 ''，界面显示成「未知版本」。 */
   @State bundledVer: string = '';
-  /* [A] 包里【有没有】那份自带游戏。
+
+  /* [A]
+   * 给**人**看的那个文件夹路径，例如 `Downloads/Mindustry Ark/games`。
    *
-   * ⭐ Ark Launcher 这个 fork 里它恒为 false（包里没有 mindustry.so），于是那一行
-   *    显示「无」；Mindustry Ark 里它恒为 true。⚠️ 它与 bundledVer 的空串是两个
-   *    不同的问题 —— 「没有」和「有但读不出」都让版本号是空串。 */
-  @State bundledPresent: boolean = false;
+   * ⚠️⚠️ 为什么真实路径不够用（用户 2026-10-02 指出）：那个文件夹在磁盘上叫
+   *    `com.haohandc.mindustryark`（由 ModImporter 用 bundle 名创建），
+   *    而**文件管理器把它显示成应用名**「Mindustry Ark」。⇒ 玩家照着应用里的
+   *    那一串去文件管理器找，**找不到**。
+   *    ⚠️ 只有应用被卸载之后，它才退化成显示包名。
+   *
+   * ⇒ 两行都给：这一行用来**找**，真实路径那一行用来**复制**。
+   *   两者都要，任缺其一都会让一部分人卡住。
+   */
+  @State jarDirHuman: string = '';
+
+  /* [B] 应用自己的显示名，由 resolveAppLabel() 从资源读出；读不到时是 ''。 */
+  private appLabel: string = '';
 
   /** [B] 应用版本，设置页那个「关于」入口用。由 Index.ets 传进来 —— 那边已经从 bundle 问到。 */
   appVersion: string = '';
@@ -298,6 +309,7 @@ export struct LauncherHome {
     this.contentPct = readWidthPct(this.filesDir);
     this.sliderPct = this.contentPct;
     this.launchMode = readLaunchMode(this.filesDir);
+    this.appLabel = this.resolveAppLabel();
     this.refresh();
   }
 
@@ -315,6 +327,27 @@ export struct LauncherHome {
   onFolderSettled(): void {
     if (this.folderSettled) {
       this.refresh();
+    }
+  }
+
+  /* [A]
+   * 应用自己的显示名 —— 也就是文件管理器给那个文件夹看的名。
+   *
+   * ⚠️ **从资源读，不硬编码。** 两个仓库的应用名不同（Mindustry Ark / Ark Launcher），
+   *    硬编码意味着其中一边必然写错，而且改名时不会有人想起来改这里。
+   *    走资源还顺带拿到**当前语言**下的名字。
+   *
+   * ⚠️ 读不到就返回 ''，调用方那时只显示真实路径 —— 退化成改之前的行为，
+   *    比显示一个错的路径好。
+   */
+  private resolveAppLabel(): string {
+    try {
+      const rm = getContext(this).resourceManager;
+      return rm.getStringSync($r('app.string.EntryAbility_label').id);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.info(DOMAIN, TAG, 'launcher: cannot read the app label (%{public}s)', err.message);
+      return '';
     }
   }
 
@@ -369,8 +402,8 @@ export struct LauncherHome {
     this.selected = readSelection(this.filesDir);
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
     this.bundledVer = bundledGameVersion(this.bundleCodeDir);
-    this.bundledPresent = hasBundledGame(this.bundleCodeDir);
     this.jarDirHint = gameJarDir(this.filesDir);
+    this.jarDirHuman = this.jarDirHint === '' ? '' : ('Downloads/' + this.appLabel + '/games');
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
                this.resolution.source);
@@ -386,17 +419,6 @@ export struct LauncherHome {
 
   /** [A] 退回内置的那一份。写一个【空的】选择，那是明确的「用包里的」，不是清除。 */
   private pickBundled(): void {
-    /* [A]
-     * 包里没有那份游戏时，这一行**仍然显示**（第二行写「无」，那本身就是有用的信息：
-     * 「你必须自己提供一个」），但它不该被选中 —— 选中它等于把「用包里的那一份」记进
-     * 状态文件，而那个文件不存在，下一次启动只会落到失败弹窗。
-     *
-     * ⚠️ 这不是「把按钮禁用掉」那一类：列表里其他行照常可用，出口一个都没少。
-     */
-    if (!this.bundledPresent) {
-      hilog.info(DOMAIN, TAG, 'launcher: no bundled game -- the row is informational only');
-      return;
-    }
     this.selected = '';
     writeSelection(this.filesDir, '');
     this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
@@ -496,9 +518,19 @@ export struct LauncherHome {
               .fontSize(13).fontColor($r('sys.color.font_secondary'))
               .margin({ top: 12 })
               .textAlign(TextAlign.Center)
+            /* [A]
+             * ⚠️ 两行，缺一不可（用户 2026-10-02 定的）：
+             *   第一行给人【找】—— 文件夹在磁盘上叫包名，而文件管理器显示的是应用名，
+             *            ⇒ 照着真实路径去文件管理器找是找不到的
+             *   第二行给人【复制】—— 真实路径可以直接粘进文件管理器的地址栏
+             */
+            Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+              .fontSize(13).fontColor($r('sys.color.font_secondary'))
+              .margin({ top: 8 })
+              .textAlign(TextAlign.Center)
             Text(this.jarDirHint === '' ? '（这个设备上还拿不到 Download 文件夹）' : this.jarDirHint)
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-              .margin({ top: 8 })
+              .margin({ top: 2 })
               .textAlign(TextAlign.Center)
               .copyOption(CopyOptions.LocalDevice)
             Text('内置游戏：' + (this.resolution.source === 'bundled' ? '有' : '无'))
@@ -528,14 +560,7 @@ export struct LauncherHome {
                    *   用户判定那个切换没必要 —— 而它是多余的：选没选中已经由右边的 ✓
                    *   表达了，再写一遍只是把**唯一能放版本号的位置**占掉了。
                    */
-                  /* ⚠️ 三种情况要分清，别把「没有」和「有但读不出」混成一句：
-                   *     没有内置游戏      -> 「无」
-                   *     有，读不出版本    -> 「未知版本」
-                   *     有，读出了        -> 版本号
-                   *   前两种都让 bundledVer 是空串，所以必须另外问一句 hasBundledGame()。 */
-                  Text(this.bundledPresent
-                       ? (this.bundledVer === '' ? '未知版本' : this.bundledVer)
-                       : '无')
+                  Text(this.bundledVer === '' ? '未知版本' : this.bundledVer)
                     .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
                 }
                 .alignItems(HorizontalAlign.Start)
@@ -662,9 +687,13 @@ export struct LauncherHome {
       Column() {
         Text('游戏 jar 目录')
           .fontSize(14).fontColor($r('sys.color.font_secondary'))
+        /* [B] 与空状态同款两行：给人找的一行 + 可复制的一行。理由见空状态里的说明。 */
+        Text(this.jarDirHuman === '' ? '　' : this.jarDirHuman)
+          .fontSize(13).fontColor($r('sys.color.font_secondary'))
+          .margin({ top: 4 })
         Text(this.jarDirHint === '' ? '（本设备上拿不到）' : this.jarDirHint)
           .fontSize(12).fontColor($r('sys.color.font_tertiary'))
-          .margin({ top: 4 })
+          .margin({ top: 2 })
           .copyOption(CopyOptions.LocalDevice)
       }
       .width(this.contentWidthVp())
@@ -862,7 +891,7 @@ export struct LauncherHome {
           Column() {
             Text('关于')
               .fontSize(14).fontColor($r('sys.color.font_secondary'))
-            Text(this.appVersion === '' ? 'Ark Launcher' : ('Ark Launcher  ' + this.appVersion))
+            Text(this.appVersion === '' ? 'Mindustry Ark' : ('Mindustry Ark  ' + this.appVersion))
               .fontSize(12).fontColor($r('sys.color.font_tertiary'))
               .margin({ top: 4 })
           }
@@ -1005,7 +1034,7 @@ export struct LauncherHome {
         .height('100%')
       }
     }
-    .title('Ark Launcher')
+    .title('Mindustry Ark')
     .titleMode(NavigationTitleMode.Mini)
     /* [A]
      * ⚠️⚠️ 必须显式写 Stack，**不能靠默认的 Auto** —— 这一行同时是两个缺陷的根因。
@@ -1072,7 +1101,7 @@ export struct LauncherHome {
           }
           .width('100%')
 
-          Text('Ark Launcher' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
+          Text('Mindustry Ark' + (this.appVersion === '' ? '' : ('  ' + this.appVersion)))
             .fontSize(14).fontColor($r('sys.color.font_secondary'))
             .margin({ top: 14 })
           Text('在 HarmonyOS / OpenHarmony 上运行 Mindustry')
