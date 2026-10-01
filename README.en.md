@@ -98,11 +98,10 @@ Once installed:
 4. Back in the app, tap **Rescan** → it appears in the list → select it
 5. Tap **Launch Game**
 
-⚠️ **The first launch lies to you once — restarting fixes it.** [measured] On a fresh install the
-very first launch shows "（this device cannot reach the Download folder yet）", while that folder
-**had already been created in the same minute**. It is a race (cause: see "Unverified").
-**Close the app and open it again** and it behaves — it lists your jars correctly.
-(Tapping Rescan once does the same thing.)
+⭐ **On a fresh install the very first launch lists your jars correctly** — that was measured
+(see "Unverified"). 📌 It did not on earlier builds: the first launch reported that the folder
+had not been read yet, and one restart cleared it. The cause was the folder being created later
+than the screen read it. **Fixed.**
 
 ⚠️ **Your jars do not disappear when the app is reinstalled.** [measured] After an uninstall and
 reinstall, both jars in that folder were **still there, with their original timestamps** —
@@ -159,14 +158,18 @@ The full list, with the evidence behind each line, is in [docs/LIMITATIONS.md](d
   Fresh install → launcher screen → add a jar → **restart, and both jars are listed correctly.**
   Those four steps work. **The last step is missing: select a jar → tap Launch Game → the game
   actually starts.** That takes two taps.
-- ⚠️ **The cause of that first-launch race (statically provable, and reproduced on a device)**:
-  the folder you drop jars into is created by `ensureModFolder()`, which in `Index.ets` is
-  **async and never awaited**; `decideStartup()` then runs **synchronously** and flips the UI to
-  the launcher **before** that folder exists. The launcher screen reads **the state file that
-  folder writes** (`gameJarDir` → `readModFolder`), so the first launch reads nothing.
+- ✅ **That first-launch race is fixed, and the fix was measured.** It used to work like this:
+  the folder you drop jars into is created by `ensureModFolder()`, which is **async** (a mkdir,
+  or a picker that waits for a person); `decideStartup()` then runs **synchronously** and flips
+  the UI to the launcher, whose own `aboutToAppear` reads **the state file that folder writes**
+  (`gameJarDir` → `readModFolder`) synchronously too — so it read something that did not exist yet.
   ⚠️ **This path could not be reached before** (a game always shipped, so the decision never
   landed on the launcher screen) — **the excision is what exposed it.**
-  ⇒ **The fix is small** (make that decision wait for the folder) but **has not been made yet**.
+  ⇒ The fix: `Index.ets` gained `folderSettled`, set at the **end** of `ensureModFolder()`'s
+  `.then()`, passed down as `@Prop @Watch` so the launcher screen re-reads once.
+  ⭐ **[measured] Fresh install, first launch, nothing tapped → both jars listed correctly.**
+  ⚠️ A blocking wait was deliberately refused: on the picker route the answer may never come,
+  and the screen would then never appear. This project has paid for a gate with no way out.
 - ✅ **A "worse case" this project was worried about did not happen.** It had recorded that the
   platform may refuse to create a directory under Downloads (`EPERM` on tablets). **This
   measurement found that route working** — the folder was created on the very first launch
