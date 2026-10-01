@@ -154,7 +154,7 @@ OUT_DIR = os.path.join(PROJECT_ROOT, "entry", "build", PRODUCT, "outputs", "defa
 # 构建出的包里读回 artifact 名并比对，所以只对三者之一
 # 而不是全部做版本提升，会让构建失败，而不是产出一个
 # 名字与内容不符的文件。
-APP_NAME = "MindustryArk"
+APP_NAME = "ArkLauncher"
 
 # ---------------------------------------------------------------------------
 # 版本
@@ -172,7 +172,7 @@ APP_NAME = "MindustryArk"
 # 所以开头的 "v" 属于发布 tag 和 artifact 名，从不属于
 # version name，两者安全的字符集是数字、字母、点、
 # 下划线和连字符。
-APP_VERSION = "1.1.0.1"
+APP_VERSION = "1.0.0.1"
 
 # versionCode 是平台实际据以排序安装的整数。
 #
@@ -222,7 +222,7 @@ APP_VERSION = "1.1.0.1"
 # 而不是降级，所以已装 `0.3.0.1` 的人会原地装它。反过
 # 来不成立：一旦 1.0.0 的构建发布，退回任何 0.x 都是
 # 降级，平台会拒绝。
-VERSION_CODE = 1010001
+VERSION_CODE = 1000001
 
 
 def version_code_for(version):
@@ -306,7 +306,7 @@ if version_code_for(APP_VERSION) != VERSION_CODE:
            APP_VERSION, version_code_for(APP_VERSION)))
 
 ARTIFACT_NAME = "%s-v%s" % (APP_NAME, APP_VERSION)
-BUNDLE_NAME = "com.haohandc.mindustryark"
+BUNDLE_NAME = "com.haohandc.arklauncher"
 
 
 # ---------------------------------------------------------------------------
