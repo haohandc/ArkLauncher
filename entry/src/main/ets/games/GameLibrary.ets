@@ -93,11 +93,24 @@ export interface GameResolution {
   source: string;
 }
 
+/* [A] ⚠️⚠️ 那个公共文件夹在**磁盘上叫 `Download`（单数）**，不是英文惯用的 "Downloads"。
+ *
+ * 本项目里「Downloads」被当成它的名字用了很久（注释、文档里都有），而它是错的。
+ * 判据是两条实测：`user_dirs.txt` 里记着
+ * `/storage/Users/currentUser/Download/com.haohandc.mindustryark`，
+ * 而 `Environment.getUserDownloadDir()` 返回 `/storage/Users/currentUser/Download`。
+ *
+ * ⭐ 为什么这条值得单独写在这里：**它是个会直接害到玩家的错**。启动器要在界面上印出
+ * 这个路径让玩家照着找过去，写复数就是叫他去找一个磁盘上不存在的文件夹 —— 和「印
+ * bundle 名而不是应用名」是同一类错（见 LauncherHome.ets 里 jarDirHuman 的注释）。
+ * ⇒ 凡是要印给玩家看的路径，一律用 `Download`。
+ */
+
 /** [A]
- * 玩家放游戏 jar 的目录；还拿不到那个 Downloads 文件夹时为 ''。
+ * 玩家放游戏 jar 的目录；还拿不到那个 Download 文件夹时为 ''。
  *
  * ⚠️ 它是从模组那个状态文件【推】出来的，而不是另立一份。那个文件夹已经是「本应用
- * 在 Downloads 里的家」，多一个状态文件就多一份会跑偏的知识 —— 本项目因为「同一件事
+ * 在 Download 里的家」，多一个状态文件就多一份会跑偏的知识 —— 本项目因为「同一件事
  * 存在两处、其中一处先跑偏」付过好几次代价。
  */
 export function gameJarDir(filesDir: string): string {
@@ -300,23 +313,6 @@ export function gameVersionOf(jarPath: string): string {
 export function bundledGameVersion(bundleCodeDir: string): string {
   const p: string = bundledGamePath(bundleCodeDir);
   return p === '' ? '' : gameVersionOf(p);
-}
-
-/* [A]
- * 包里到底有没有那份自带游戏。
- *
- * ⭐ 它与 bundledGameVersion() 回答的是**两个不同的问题**，而界面需要分开显示：
- *     没有内置游戏        -> 「无」
- *     有，但读不出版本    -> 「未知版本」
- *   两者都让 bundledGameVersion() 返回空串，所以空串**不足以**区分它们。
- *
- * ⚠️ 这正是 Ark Launcher 那个 fork 唯一的差别所在：它的包里【没有】这个文件
- *    （见 scripts/verify_hap.py 第 6 段，那里要求它不存在）。代码两边完全一样，
- *    差别只在数据 —— 于是「把 mindustry.so 一删」就是一次完整的迁移。
- */
-export function hasBundledGame(bundleCodeDir: string): boolean {
-  const p: string = bundledGamePath(bundleCodeDir);
-  return p !== '' && isReadableJar(p);
 }
 
 /** [B] 玩家选中的那个 jar 的路径；没选过时为 ''。 */
