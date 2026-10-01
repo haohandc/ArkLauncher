@@ -1,4 +1,4 @@
-# 权限 · MindustryArk
+# 权限 · ArkLauncher
 
 [← 返回 README](../README.md) · [← Back to README](../README.en.md)
 

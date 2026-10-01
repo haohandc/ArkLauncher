@@ -1,4 +1,4 @@
-# MindustryArk
+# ArkLauncher
 
 [English](README.en.md) | **简体中文**
 
@@ -38,7 +38,7 @@
 | 键盘 | 可用（物理键盘；WASD 与 ESC）。往游戏输入框里打字用**带输入法的弹出式输入框** —— 见[已知限制](docs/LIMITATIONS.md) |
 | 鼠标 / 手柄 | 鼠标可用；手柄**未测试** |
 | 存档导入导出 | 走「下载」里的应用文件夹往返。⚠️ **游戏的浏览器能否读那个路径尚未验证**（它走 libc 用路径，而应用的授权是按 URI 持有的）—— 见[已知限制](docs/LIMITATIONS.md) |
-| 模组 | 可用。用**游戏自带的「导入模组」按钮**导入 —— 这是**唯一**入口，且不用重启。应用**故意不**自己去 Download 里收文件：把文件放进 `Download/com.haohandc.mindustryark/` 后，在那个浏览器里**选一下**即可。见[已知限制](docs/LIMITATIONS.md) |
+| 模组 | 可用。用**游戏自带的「导入模组」按钮**导入 —— 这是**唯一**入口，且不用重启。应用**故意不**自己去 Download 里收文件：把文件放进 `Download/com.haohandc.arklauncher/` 后，在那个浏览器里**选一下**即可。见[已知限制](docs/LIMITATIONS.md) |
 | 桌面 / 移动模式切换 | 可切换，但**需要重启应用** —— 见[常见问题](docs/FAQ.md) |
 | 网络 / 联机 | **平台层面已通**（`socket` / `epoll` / DNS / TCP / TLS / HTTP 全部实测可用）。**局域网、公网服务器搜索、在本机开服三项均已实测**。⚠️ **但还没打完过一局真实的多人对局** |
 

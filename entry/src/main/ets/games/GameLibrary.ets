@@ -37,12 +37,13 @@ const SELECTION_FILE_NAME = 'selected_game.txt';
 const LAUNCHER_MARKER_FILE_NAME = 'show_launcher';
 
 /* [A]
- * 内置游戏在包里的路径，相对 bundleCodeDir。
+ * ⛔ 这里【曾经】是 `BUNDLED_GAME_REL = '/libs/arm64/game/mindustry.so'` ——
+ * 包里那份自带游戏的位置。2026-10-01 删掉：Ark Launcher 不分发游戏本体。
  *
- * ⚠️ 结尾是 .so 而不是 .jar，这不是笔误：hvigor 只把文件名以 .so 结尾的东西从
- * entry/libs/ 拷进包，所以两个 jar 都是改过名的。见 launcher.c 的 GAME_JAR 注释。
+ * ⇒ 「用哪个 jar」现在只有一个来源：玩家在启动器里挑的那个。见 resolveGame()。
+ *
+ * ⚠️ 产物侧的对应断言在 scripts/verify_hap.py 第 6 段（要求它不存在）。
  */
-const BUNDLED_GAME_REL = '/libs/arm64/game/mindustry.so';
 
 /** [B] 列表里的一项。够画一行就够了。 */
 export interface GameJar {
@@ -173,15 +174,6 @@ export function isReadableJar(path: string): boolean {
   return ok;
 }
 
-/** [B] 内置游戏在包里的绝对路径。结尾的斜杠会被吃掉，因为 bundleCodeDir 有没有它不确定。 */
-export function bundledGamePath(bundleCodeDir: string): string {
-  let base: string = bundleCodeDir;
-  while (base.length > 1 && base.endsWith('/')) {
-    base = base.substring(0, base.length - 1);
-  }
-  return base + BUNDLED_GAME_REL;
-}
-
 /** [B] 玩家选中的那个 jar 的路径；没选过时为 ''。 */
 export function readSelection(filesDir: string): string {
   const path: string = filesDir + '/' + SELECTION_FILE_NAME;
@@ -274,41 +266,42 @@ export function consumeLauncherRequest(filesDir: string): boolean {
 /** [A]
  * 决定这次启动用哪个 jar。**这是闸门读的那个函数。**
  *
- * 顺序：玩家选的 → 包里的 → 都没有。
+ * ⭐ 只有一个来源：**玩家挑的那个**。
  *
- * ⚠️ 两个来源都必须【真的能打开】才算数。一条记在那里、但文件已经被删掉的路径必须
- * 落回下一档，而不是让启动失败 —— 玩家删掉一个 jar 文件是常事。
+ * ⛔ 从前是「玩家选的 → 包里自带的 → 都没有」。2026-10-01 去掉中间那档 ——
+ * 本应用不再分发游戏本体。
+ *
+ * ⭐ 这顺带消掉一个隐患：一条记在那里、但文件已被删掉的选择，从前会【静默落回
+ * 内置游戏】—— 玩家以为在用自己那个、实际在用内置的，而界面和日志都不说这件事。
+ * 现在没有可落回的东西，那种静默无从发生：判定失败就是失败，界面明说「没有找到游戏」。
+ *
+ * ⚠️ 那唯一一个来源必须【真的能打开】才算数 —— 玩家删掉一个 jar 文件是常事。
  */
-export function resolveGame(filesDir: string, bundleCodeDir: string): GameResolution {
+export function resolveGame(filesDir: string): GameResolution {
   const chosen: string = readSelection(filesDir);
   if (chosen !== '' && isReadableJar(chosen)) {
     return { path: chosen, source: 'user' };
   }
   if (chosen !== '') {
-    hilog.warn(DOMAIN, TAG, 'games: the chosen jar is gone, falling back: %{public}s', chosen);
-  }
-  const bundled: string = bundledGamePath(bundleCodeDir);
-  if (isReadableJar(bundled)) {
-    return { path: bundled, source: 'bundled' };
+    hilog.warn(DOMAIN, TAG, 'games: the chosen jar is gone or is not a jar: %{public}s', chosen);
   }
   return { path: '', source: 'none' };
 }
 
 /** [A]
- * 把这次判断的依据整个写进 hilog，每次都写。
+ * 把这次判断的依据写进 hilog，每次都写。
  *
  * 为什么值得占几行日志
- *   「闸门判定没有游戏」和「我算错了内置游戏的路径」在界面上长得【一模一样】——
- *   都是启动器界面。🔶 `bundleCodeDir` 到底是不是 /data/storage/el1/bundle 目前
- *   只是推断（.d.ts 只写类型、不写值），所以第一次上设备时，这几行就是唯一的判据。
+ *   「判定没有游戏」和「我把路径算错了」在界面上长得【一模一样】—— 都是启动器界面。
+ *   这几行是唯一能把两者分开的东西。
+ *
+ * ⛔ `bundleCodeDir` 那两行 2026-10-01 删掉了：它从前是用来回答「包里那份游戏在不在、
+ * 能不能读」的，而现在包里没有游戏。那个问题本身也已经有答案（实测 =
+ * /data/storage/el1/bundle），不需要每次启动再问一遍。
  */
-export function reportGameResolution(filesDir: string, bundleCodeDir: string,
-                                     r: GameResolution): void {
-  hilog.info(DOMAIN, TAG, 'games: bundleCodeDir=%{public}s', bundleCodeDir);
+export function reportGameResolution(filesDir: string, r: GameResolution): void {
   hilog.info(DOMAIN, TAG, 'games: jar dir=%{public}s',
              gameJarDir(filesDir) === '' ? '(not available)' : gameJarDir(filesDir));
-  hilog.info(DOMAIN, TAG, 'games: bundled=%{public}s readable=%{public}s',
-             bundledGamePath(bundleCodeDir), String(isReadableJar(bundledGamePath(bundleCodeDir))));
   hilog.info(DOMAIN, TAG, 'games: resolved=%{public}s source=%{public}s',
              r.path === '' ? '(none)' : r.path, r.source);
 }

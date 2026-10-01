@@ -319,48 +319,34 @@ def main():
     print()
 
     # ==================================================================
-    # 6. 游戏本体 -- 以及这里为什么用哈希而不是大小检查。
+    # 6. 游戏本体【不在】包里 —— 反过来的断言。
     #
-    # 这个 jar 以 ".so" 之名发运（见 prep_game.py），意味着工具链里
-    # 没有任何东西会解析它：hvigor 不，打包器不，安装器也不。
-    # 一直到设备上它都是不透明的字节。所以唯一有意义的
-    # 问题就是设备上那 86,957,725 字节是否与固定构建的字节相同
-    # -- 而回答它的唯一办法就是对它们做哈希。
+    # Ark Launcher 不分发 Mindustry 本体：玩家自己提供 jar。所以这里要
+    # 断言的是【不存在】。
     #
-    # 大小检查对未打补丁的 jar 也会过关，对重跑上游阶段
-    # 却漏了下游阶段的 jar 也会过关，而本项目已经
-    # 这样发出去过一个错误的 jar。
+    # ⭐ 一道「必须不存在」的闸门，和「必须存在」的一样值钱：它挡的是
+    # 哪天有人不小心又把游戏打回去。而那种错误从两边都看不出来 ——
+    # 产物上看不出（包只是大了 87 MB）、代码上也看不出（没有任何人
+    # 「改」过什么，只是一条旧路径又被跑了一次）。
     #
-    # 采用流式哈希，直接从归档里读，这样就不会
-    # 写下 87 MB 的副本只为把它删掉。
+    # ⚠️ 为什么不能只靠「没人再去复制它」：entry/libs/ 是 gitignore 的
+    # 工作区目录。一次旧构建留下的 game/mindustry.so 会【原样进包】，
+    # 而构建不会报任何错。所以闸门必须建在【产物】上。
+    #
+    # 这条闸门的前身是「这个 jar 以 .so 之名发运，所以只能靠哈希
+    # 确认设备上那 86,957,725 字节是对的」—— 那段历史在 git 里，
+    # 见本文件 2026-10-01 之前的版本。
     # ==================================================================
-    print("== 6. the game jar, hashed as packaged ==")
-    import hashlib
-    # ⭐ 上游原版 jar，未修改 -- 所以这是关于 Anuken 发布的
-    # 文件的陈述，而不是关于我们自己构建产物的。见
-    # prep_game.py 里的说明。2026-09-28 更改；它曾固定的是我们多阶段的变体。
-    WANT_GAME = "8e0fd5d7dd7828fccff59a693a635948883a704b"
+    print("== 6. the game jar is NOT shipped ==")
     GAME_ENTRY = "libs/arm64-v8a/game/mindustry.so"
-    game_ok = False
     with zipfile.ZipFile(hap) as z:
-        if GAME_ENTRY not in z.namelist():
-            print("   MISSING from the archive: %s" % GAME_ENTRY)
-        else:
-            h = hashlib.sha1()
-            n = 0
-            with z.open(GAME_ENTRY) as src:
-                while True:
-                    b = src.read(1 << 20)
-                    if not b:
-                        break
-                    h.update(b)
-                    n += len(b)
-            got_game = h.hexdigest()
-            game_ok = got_game == WANT_GAME
-            print("   entry : %s" % GAME_ENTRY)
-            print("   bytes : %d" % n)
-            print("   expect: %s" % WANT_GAME)
-            print("   actual: %s   %s" % (got_game, "OK" if game_ok else "MISMATCH"))
+        game_ok = GAME_ENTRY not in z.namelist()
+    if game_ok:
+        print("   absent, as intended: %s" % GAME_ENTRY)
+    else:
+        print("   PRESENT, and this build must not carry it: %s" % GAME_ENTRY)
+        print("   Ark Launcher is a launcher; the player supplies the game.")
+        print("   Remove it with: python scripts/prep_game.py")
     print()
 
     # ==================================================================

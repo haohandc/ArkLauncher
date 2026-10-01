@@ -1,4 +1,4 @@
-# 隐私政策 · Mindustry Ark
+# 隐私政策 · Ark Launcher
 
 [← 返回 README](README.md) · [← Back to README](README.en.md)
 
@@ -7,7 +7,7 @@
 
 **生效日期：2026-09-22**
 
-本政策适用于 **Mindustry Ark**（包名 `com.haohandc.mindustryark`，以下简称「本应用」）。
+本政策适用于 **Ark Launcher**（包名 `com.haohandc.arklauncher`，以下简称「本应用」）。
 
 ## 一、我们收集哪些个人信息
 
@@ -41,9 +41,13 @@
 ⇒ **本应用只读取下列两类文件**：① 你在系统文件选择器里**主动选中**的模组文件；
 ② 本应用自己沙箱内的游戏数据。**不会在后台扫描或传输任何目录的内容。**
 
-## 四、⚠️ 关于游戏内置的联网功能
+## 四、⚠️ 关于游戏自身的联网功能
 
-本应用内置的 Mindustry 包含多人联机、模组浏览与服务器列表等功能的**代码**，这些代码**会尝试**访问上游维护的公开服务器，包括但不限于：
+⛔ **2026-10-01 起，本应用不再内置 Mindustry** —— 游戏本体由你自己提供。
+下面说的是**那份游戏**里的代码会做什么：本应用自身不发起这些请求，但它
+**把网络权限交给了游戏**，所以那些请求会以本应用的网络权限发出。
+
+Mindustry 包含多人联机、模组浏览与服务器列表等功能的**代码**，这些代码**会尝试**访问上游维护的公开服务器，包括但不限于：
 
 - `api.github.com`（版本信息与封禁列表查询）
 - `cdn.jsdelivr.net`（服务器列表、模组索引）
@@ -66,7 +70,7 @@
 
 本应用是**非官方**的第三方移植版，与 Mindustry 项目及其作者 Anuken **无隶属关系，未获其认可或支持**。
 
-内置的第三方组件及其许可：Mindustry 与 Arc（Anuken，GPL-3.0 / Apache-2.0）、SDL3（Zlib）、LWJGL（BSD-3-Clause）、OpenJDK 21（GPL-2.0 with Classpath Exception）。详见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
+随包分发的第三方组件及其许可：Arc 的原生库（Anuken，Apache-2.0）、SDL3（Zlib）、LWJGL（BSD-3-Clause）、OpenJDK 21（GPL-2.0 with Classpath Exception）。⛔ **Mindustry 本体不在其中** —— 它不随包分发（GPL-3.0，由玩家自行提供）。详见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
 
 ## 六、儿童
 
@@ -90,7 +94,7 @@
 
 **Effective date: 2026-09-22**
 
-This policy applies to **Mindustry Ark** (bundle name `com.haohandc.mindustryark`, "the app").
+This policy applies to **Ark Launcher** (bundle name `com.haohandc.arklauncher`, "the app").
 
 ## 1. What we collect
 

@@ -11,9 +11,9 @@ to download or install the app, which is why it does not live in the release not
 
 | Artifact | Publish? | Why |
 |---|---|---|
-| `MindustryArk-v<version>-unsigned.hap` | **yes** | Anyone can sign it with their own certificate and install it. This is the app. |
-| `MindustryArk-v<version>-payload.zip` | yes | Build inputs. Not needed to play. |
-| `MindustryArk-v<version>.hap` (signed) | **NO** | Device-locked, and it discloses personal data. |
+| `ArkLauncher-v<version>-unsigned.hap` | **yes** | Anyone can sign it with their own certificate and install it. This is the app. |
+| `ArkLauncher-v<version>-payload.zip` | yes | Build inputs. Not needed to play. |
+| `ArkLauncher-v<version>.hap` (signed) | **NO** | Device-locked, and it discloses personal data. |
 
 ### Why the signed HAP is never a release artifact
 
@@ -45,7 +45,7 @@ assumed.** The profile sits in the signing block as plain JSON:
 
 ```bash
 python - <<'PY'
-p = "entry/build/default/outputs/default/MindustryArk-v0.2.0-beta.1.hap"
+p = "entry/build/default/outputs/default/ArkLauncher-v0.2.0-beta.1.hap"
 d = open(p, "rb").read()[-400000:]
 i = d.find(b'"debug-info"')
 print(d[max(0, i - 900):i + 400].decode("utf-8", "replace"))
@@ -137,9 +137,10 @@ needs a real-name-verified developer account. Two caveats before promising it to
 - A Release profile has no device list, which is what would make the result installable on
   arbitrary devices. Read from the profile format (source above); **not tested here**.
 - Full distribution through AppGallery also means app review, which an unofficial
-  Mindustry launcher would not pass on licensing grounds. See `THIRD-PARTY.md`: a build
-  redistributes GPL-3.0 Mindustry, so it can only be distributed with its source, which is
-  what this repository is for.
+  Mindustry launcher would not pass on licensing grounds. See `THIRD-PARTY.md`: this
+  repository is GPL-3.0, and while a build no longer redistributes Mindustry itself
+  (2026-10-01), the corresponding source for **this project** still has to travel with
+  any binary — which is what this repository is for.
 
 ---
 
@@ -157,13 +158,13 @@ showable.
 
 | versionCode | Asset | Size | sha256 |
 |---|---|---|---|
-| 10001 | `MindustryArk-v0.1.0-beta.1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
-| 10001 | `MindustryArk-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
-| 20001 | `MindustryArk-v0.2.0-beta.1-unsigned.hap` | 272,561,064 B | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
-| 20001 | `MindustryArk-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
-| ⏳ 20002 | `MindustryArk-v0.2.0.2-unsigned.hap` (release `buildMode`, release `product`) | 261,007,438 B | `f3944aa4957ba34e17f44a256140b62e1c53acad50152df0064bb4fb707833c7` |
-| ⏳ 20002 | `MindustryArk-release-signed.app` — **AppGallery upload only, never on the releases page** | 153,000,164 B | `3a12635c73f4a7871c1dfd66623c69b356f1adb121aa5bf2f00d6084ff95668a` |
-| ⏳ 20002 | `MindustryArk-release-unsigned.app` | 152,985,434 B | `f3c24b6a2e081fa293b4cccb5b32c0c9d8d3b380cbff8853a2d47624118287a3` |
+| 10001 | `ArkLauncher-v0.1.0-beta.1-unsigned.hap` | 272,616,859 B | `0e2a6c9086814a383a21b35ce7944f21fc588eb3df333efb1fed864822abc4f0` |
+| 10001 | `ArkLauncher-v0.1.0-beta.1-payload.zip` | 146,836,356 B | `93db79ffd7974fb93859fc91b3e1de44d939a107c563e1399d430a8e36004adb` |
+| 20001 | `ArkLauncher-v0.2.0-beta.1-unsigned.hap` | 272,561,064 B | `9b9f7d19e15845ccc9567c7f93a120fdc3b05b1e2af4c9807fcec478483ee51c` |
+| 20001 | `ArkLauncher-v0.2.0-beta.1-payload.zip` | 146,836,398 B | `f7b08a7e577913c1540e502efb6f26846d48efea08e80d165b7cebb456e3e26a` |
+| ⏳ 20002 | `ArkLauncher-v0.2.0.2-unsigned.hap` (release `buildMode`, release `product`) | 261,007,438 B | `f3944aa4957ba34e17f44a256140b62e1c53acad50152df0064bb4fb707833c7` |
+| ⏳ 20002 | `ArkLauncher-release-signed.app` — **AppGallery upload only, never on the releases page** | 153,000,164 B | `3a12635c73f4a7871c1dfd66623c69b356f1adb121aa5bf2f00d6084ff95668a` |
+| ⏳ 20002 | `ArkLauncher-release-unsigned.app` | 152,985,434 B | `f3c24b6a2e081fa293b4cccb5b32c0c9d8d3b380cbff8853a2d47624118287a3` |
 
 ⚠️ **The `⏳` rows are the LOCAL build's hashes, not yet upload-verified.** They become ledger
 entries only after the release exists and both assets have been **downloaded back and re-hashed**
@@ -249,7 +250,7 @@ So for an `.app` the useful checks are:
 |---|---|---|
 | signature present | `-----BEGIN CERTIFICATE-----` anywhere in the file | **True** |
 | no key material | `PRIVATE KEY` in the file | **False** |
-| **which** certificate | extract the PEM, `base64`-decode it, SHA-256 the DER; compare against the `.cer` | byte-identical to `KeyNprofile/Mindustry Ark Release.cer`'s **leaf**, and **not** the debug one |
+| **which** certificate | extract the PEM, `base64`-decode it, SHA-256 the DER; compare against the `.cer` | byte-identical to `KeyNprofile/Ark Launcher Release.cer`'s **leaf**, and **not** the debug one |
 | debug markers | the 4-marker scan | 0/4 — but here that is **not** evidence of anything, because a release profile has no `debug-info`/`device-ids` to begin with |
 
 ⚠️ **The PEM in the signature block escapes its newlines as a literal backslash + `n`**, so a
@@ -411,10 +412,10 @@ pair per version bump, per build mode:
 
 ```
 entry/build/default/outputs/default/
-    MindustryArk-v0.2.0-beta.2-unsigned.hap   2026-09-21 22:39   <- stale
-    MindustryArk-v0.2.0-beta.2.hap            2026-09-21 22:39   <- stale
-    MindustryArk-v0.2.0.2-unsigned.hap        2026-09-22 00:07   <- current
-    MindustryArk-v0.2.0.2.hap                 2026-09-22 00:07   <- current
+    ArkLauncher-v0.2.0-beta.2-unsigned.hap   2026-09-21 22:39   <- stale
+    ArkLauncher-v0.2.0-beta.2.hap            2026-09-21 22:39   <- stale
+    ArkLauncher-v0.2.0.2-unsigned.hap        2026-09-22 00:07   <- current
+    ArkLauncher-v0.2.0.2.hap                 2026-09-22 00:07   <- current
 ```
 
 ⭐ **This misled two separate checks on the same day**, which is why it is
@@ -488,7 +489,7 @@ downloadable today, and today the store build is not.
 > ⇒ So this is a **DFX-record** problem (every run leaves a crash entry, which looks bad in a
 > submission and clutters your own logs), **not a user-visible defect** and **not the rejection**.
 >
-> ⭐ `MindustryArk-功能路线图.md:912` already said this correctly at the time
+> ⭐ `ArkLauncher-功能路线图.md:912` already said this correctly at the time
 > (「但它**不是**本次驳回的原因……与 **2.11** 的启动卡死吻合」). **That line is right and this
 > title was wrong.**
 >
@@ -1524,7 +1525,7 @@ that cost `tools/probe-mod/` its reason to exist (see "The one capability genuin
 Recorded because the loss is only acceptable if what replaced it actually happens, and now it has.
 
 ⚠️ **What is still NOT verified**: that a mod *deleted from the game* is also gone from the
-**staged copy in `Download/Mindustry Ark/`**. It should be -- nothing reads that folder any more --
+**staged copy in `Download/Ark Launcher/`**. It should be -- nothing reads that folder any more --
 but nothing has looked. If the file is still sitting there, the player can re-import it by hand,
 which is the intended behaviour and not a resurrection; the distinction is that it takes a
 deliberate pick rather than happening at launch.
@@ -1548,7 +1549,7 @@ the bridge is written, so there is no `mods=` line. Verified as a one-launch eff
 regression: the tablet reported
 
     first launch   arc.sdl.chooserPath=/storage/Users/currentUser/Download
-    second launch  arc.sdl.chooserPath=/storage/Users/currentUser/Download/com.haohandc.mindustryark
+    second launch  arc.sdl.chooserPath=/storage/Users/currentUser/Download/com.haohandc.arklauncher
 
 ⚠️ **`deploy.sh` uninstalls, so every deployment re-creates it** -- which is why it looked like
 something this session's changes had broken. It predates them.
@@ -1659,9 +1660,9 @@ change, and its negative test now injects the *new* version, which is how you ca
   corrected: it had said this was an RC **of 0.3.0** leading to `0.3.0.2`, which the renumber
   made false. Its artifact names were rewritten too.
 - The **tag now aligns with the artifact name** again: `v1.0.0.1` ↔
-  `MindustryArk-v1.0.0.1-unsigned.hap`. ⭐ That correspondence is worth keeping — it is how
+  `ArkLauncher-v1.0.0.1-unsigned.hap`. ⭐ That correspondence is worth keeping — it is how
   someone holding a downloaded file finds the release it came from.
-- ⚠️ **The superseded `dist/MindustryArk-v0.3.0.1-*` copies were DELETED**, not kept beside the
+- ⚠️ **The superseded `dist/ArkLauncher-v0.3.0.1-*` copies were DELETED**, not kept beside the
   new ones. 2.8 records that stale files sitting next to current ones misled **two separate
   checks on one day**; leaving a never-published 0.3.0.1 next to a 1.0.0.1 would be that same
   trap set by hand.
@@ -1916,7 +1917,7 @@ zh, en = s.split("# English", 1)
 en = en.lstrip("\n")
 os.makedirs("release-notes", exist_ok=True)
 io.open("release-notes/1.0.0.1.en.md", "w", encoding="utf-8", newline="\n").write(
-    "# Mindustry Ark 1.0.0.1 (RC 1) — release notes\n\n" + en.rstrip() + "\n")
+    "# Ark Launcher 1.0.0.1 (RC 1) — release notes\n\n" + en.rstrip() + "\n")
 link = ("> **English: [1.0.0.1 (RC 1) release notes]"
         "(https://github.com/haohandc/MindustryArk/blob/master/release-notes/1.0.0.1.en.md)**\n\n")
 io.open(body, "w", encoding="utf-8", newline="\n").write(link + zh.rstrip() + "\n")
@@ -2065,7 +2066,7 @@ Doing only the first two ships a package named after the previous version.
       ```
       Measured against the 0.2.0.2 HAP: **394 hits in exactly 4 files** — `libSDL3.so` 372,
       `libmain.so` 9, `libarcarm64.so` 7, `libcxxabi_shim.so` 6 — and nothing else.
-      ⚠️ Measured 2026-09-21: `libmain.so` (`…/MindustryArk/entry/src/main/cpp/launcher.c`),
+      ⚠️ Measured 2026-09-21: `libmain.so` (`…/ArkLauncher/entry/src/main/cpp/launcher.c`),
       `libSDL3.so` (177 paths), `libarcarm64.so` (`…/Temp/soloud-src/…`) and
       `libcxxabi_shim.so` (`…/DevEcoProj/sdl-template/…`). Low sensitivity — a Windows
       username and a project location, no credentials — but fixable by adding

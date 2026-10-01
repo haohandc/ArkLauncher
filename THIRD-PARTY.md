@@ -16,21 +16,32 @@ Retrieved 2026-09-20.
 
 ## Why this project is GPL-3.0
 
-A build redistributes Mindustry, so the licence of this project is not a free
-choice. GPL-3.0 §5 defines an "aggregate" as a compilation of works that are
-*not* extensions of one another and are *not* combined so as to form a larger
-program; the covered work can sit in an aggregate without pulling the rest under
-its licence. That exemption does not apply here:
+⚠️ **Ark Launcher does not redistribute Mindustry** (2026-10-01): the launcher
+ships without a game, and the player supplies their own jar. That removes two of
+the three reasons this section used to give — **but it does not change the
+licence.** The argument, with the dead parts marked:
 
-- a HAP is a single installable unit, not a directory of independent programs;
-- the launcher exists to run Mindustry and does nothing else;
-- the game jar is packaged into the same artifact as the launcher.
+- ~~the game jar is packaged into the same artifact as the launcher~~ — **no
+  longer true**; this build carries no game jar at all;
+- ~~a HAP is a single installable unit, not a directory of independent programs~~
+  — still true of the HAP, but there is no longer a second work for it to be
+  combined *with*, so the point has nothing to do;
+- **the launcher exists to run Mindustry and does nothing else** — unchanged.
 
-That is a combined work, so the whole is GPL-3.0. Choosing it deliberately is
-also the cheapest option: for a project that is open anyway it costs nothing,
-and it removes the question entirely.
+⭐ The surviving point is the one that was always doing the real work, and
+shipping the game separately does not touch it. This is not a general-purpose
+launcher that happens to support Mindustry: its entry class
+(`mindustry/desktop/DesktopLauncher`), its class-path shape, its patch jar, its
+mod-directory layout and its version readout are all Mindustry's. A work written
+specifically to run another work is a derivative of it.
 
-**Compatibility check.** Every other component permits this combination:
+⇒ **This repository stays GPL-3.0.** What changed is the *distribution*
+obligation, not the licence — see the Mindustry section below.
+
+Choosing GPL-3.0 deliberately is also the cheapest option: for a project that is
+open anyway it costs nothing, and it removes the question entirely.
+
+**Compatibility check.** Every component still shipped permits this combination:
 
 | Component | Compatible with GPL-3.0? |
 |---|---|
@@ -67,35 +78,36 @@ they are.
 
 ### Mindustry — GPL-3.0
 
-A build redistributes an upstream release jar as
-`entry/libs/arm64-v8a/game/mindustry.so` — the `.so` name is a packaging
-requirement, not a modification (see README).
+⛔ **Not redistributed. Changed 2026-10-01.** Earlier builds packaged an upstream
+release jar at `entry/libs/arm64-v8a/game/mindustry.so` (the `.so` name was a
+packaging requirement, not a modification). Ark Launcher ships without it: the
+player points the launcher at a jar of their own.
 
-**Which parts of that jar are modified, precisely**, because the source
-obligation depends on it:
+Three things enforce that, so it is a property of the build rather than an
+intention:
 
-| Part of the jar | State |
-|---|---|
-| `mindustry/**` (the game itself) | **Unmodified.** `scripts/patch_mindustry.py` does not rewrite these; it only *asserts* that `mindustry/desktop/DesktopLauncher.class` and `mindustry/Vars.class` are still present, so that a jar that is not what it claims to be fails loudly |
-| `arc/backend/sdl/**` and `arc/graphics/gl/**` (the framework) | **Replaced** with builds from patched sources — see the Arc section |
-| `arc/backend/sdl/jni/**` | Preserved deliberately: Mindustry's own classes still reference them |
+- `scripts/prep_game.py` now **removes** that path instead of filling it;
+- `scripts/verify_hap.py` §6 **fails the build** if a game jar is present in the
+  artifact — verified by putting one there on purpose and watching it fail;
+- `scripts/make_payload_zip.py` no longer requires it in the payload.
 
-So the jar as a whole is **not** byte-identical to upstream; it is an upstream
-jar with the framework's backend classes swapped. The pinned SHA-1 in
-`prep_game.py` (checked in `verify_hap.py`) identifies exactly which build is
-shipped.
+**What that changes.** GPL-3.0 §6 obliges whoever distributes a binary to make
+the corresponding source available to its recipients. Distributing no Mindustry
+binary means **there is no Mindustry source obligation to discharge** — the old
+clause about pointing at upstream has nothing left to attach to.
 
-**Source obligation.** GPL-3.0 requires the corresponding source to be available
-to anyone who receives the binary. That now covers two things:
+**What it does not change.** The licence of this repository, which is still
+GPL-3.0 (see above), and the attribution and non-affiliation notes at the end.
 
-- **This project's own source**, which is why this repository exists and is
-  published under GPL-3.0. The build scripts are part of it — they are what
-  produce the artifact.
-- **Mindustry's source**, for the unmodified game code — upstream, at
-  <https://github.com/Anuken/Mindustry>. Because those classes are unmodified,
-  pointing at upstream is sufficient and no fork is needed.
+⚠️ **If a build ever puts the game back, every obligation in this section returns
+with it.** That is not a formality: a HAP containing the game *is* a distribution
+of it, exactly as before. The path that used to document which parts of the jar
+were modified — the `mindustry/**` / `arc/**` table — is in this file's git
+history, and it becomes live again the moment the jar does.
 
-Keep the licence text with any redistribution.
+**Corresponding source for this project** is still required, and this repository
+is it. The build scripts are part of it, because they are what produce the
+artifact.
 
 ### Arc — Apache-2.0
 

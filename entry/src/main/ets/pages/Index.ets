@@ -565,7 +565,6 @@ struct Index {
   @State showLauncher: boolean = false;
   /* [B] 传给启动器界面的两个路径。从 context 取一次，因为那是页面才拿得到的东西。 */
   private launcherFilesDir: string = '';
-  private launcherBundleDir: string = '';
 
   /** [A] 设置一次，在 XComponent 存在之前：见 aboutToAppear。 */
   @State shieldBlocked: boolean = false;
@@ -1747,17 +1746,15 @@ struct Index {
   private decideStartup(): void {
     const ctx = getContext(this) as common.UIAbilityContext;
     this.launcherFilesDir = ctx.filesDir;
-    this.launcherBundleDir = ctx.bundleCodeDir;
 
     /* ⚠️ 这个调用【顺带把标记删掉】—— 读而不清会把「点过一次启动器」变成一道永久的
      * 门。理由写在 consumeLauncherRequest 的注释里，那里执行了删除。 */
     const requested: boolean = consumeLauncherRequest(ctx.filesDir);
 
-    const r: GameResolution = resolveGame(ctx.filesDir, ctx.bundleCodeDir);
-    /* [A] 每一次都把这些路径写进日志。🔶 `bundleCodeDir` 的取值目前只是推断，
-     * 而「判定没有游戏」和「我把内置游戏的路径算错了」在界面上长得一模一样 ——
-     * 第一次上设备时，这几行是唯一能把两者分开的东西。 */
-    reportGameResolution(ctx.filesDir, ctx.bundleCodeDir, r);
+    const r: GameResolution = resolveGame(ctx.filesDir);
+    /* [A] 每一次都把它写进日志。「判定没有游戏」和「我把路径算错了」在界面上长得
+     * 一模一样 —— 都是启动器界面。这几行是唯一能把两者分开的东西。 */
+    reportGameResolution(ctx.filesDir, r);
 
     if (requested) {
       hilog.info(DOMAIN, TAG, 'startup: the launcher was requested -- showing it');
@@ -1866,7 +1863,6 @@ struct Index {
     if (this.showLauncher) {
       LauncherHome({
         filesDir: this.launcherFilesDir,
-        bundleCodeDir: this.launcherBundleDir,
         onLaunch: (jarPath: string) => { this.startGame(jarPath); },
         /* [A] 「仍然尝试启动」：绕开判定，直接进游戏树。它是逃生门 —— 判定没有游戏有
          * 三个来源（真的没有 / 我把路径算错了 / 那台设备上建不出文件夹），而其中两个

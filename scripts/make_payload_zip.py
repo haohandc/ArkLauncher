@@ -69,8 +69,10 @@ REQUIRED = {
     "jdkhome/lib/security/cacerts.so":
         "the trust store. Without it TLS has no roots and networking fails "
         "in a way that looks like a server problem -- run scripts/prep_jdkconf.py",
-    "game/mindustry.so":
-        "the game jar, renamed. The classpath points at it",
+    # ⛔ "game/mindustry.so" 曾经也在这里要求。Ark Launcher 不分发游戏
+    # 本体了，所以它【不该】在载荷包里 —— 要求它存在会让每一次构建
+    # 都失败。反过来的断言在 verify_hap.py 第 6 段：那里要求它
+    # 不存在，挡的是"哪天有人不小心又把游戏打回去"。
     # "probe/probe-mod.jar.so" 曾经也在这里要求，现在不再要求，因为
     # 它已经不再产出：tools/probe-mod/build.sh 不再把它安装进
     # libs/，因为每次启动把它拷进游戏 mods 目录的 ArkTS 代码

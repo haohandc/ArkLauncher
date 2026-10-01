@@ -1,36 +1,39 @@
 # -*- coding: utf-8 -*-
-r"""Place the game jar inside the HAP's library area, under a *.so name.
+r"""Keep the HAP's library area free of any game jar.
 
-WHY A *.so NAME
-    hvigor copies entry/libs/arm64-v8a/** into the HAP only for names ending in
-    ".so"; content is never inspected. Measured on the built HAP: the 140 MB
-    module image ships as jdk21/lib/jimg.so and the real JVM as libjvm_real.so,
-    both at exactly their project sizes, while everything under jdk21/conf/ was
-    dropped silently. A jar is no more of an ELF than the module image is, so it
-    takes the same road. The JVM opens a class-path entry by content, not by
-    name, so the extension is invisible to it.
+⚠️ 这个脚本的职责在 2026-10-01 **反转**了。它过去把游戏 jar【复制】进
+entry/libs/arm64-v8a/game/；现在它保证那里【没有】游戏 jar，并在发现
+残留时把它清掉。Ark Launcher 是启动器，游戏本体由玩家自己提供。
 
-WHY A SUBDIRECTORY
-    The top-level names in libs/arm64-v8a/ are the ones the platform treats as
-    the app's native libraries. A jar is not one. Placing it one level down
-    matches where the module image already lives and is known not to be mapped.
+WHY THIS IS STILL A SCRIPT, AND NOT SIMPLY A DELETED FILE
+    entry/libs/ 是 gitignore 的工作区目录（见 .gitignore 里那段说明），
+    而一次**旧构建**会在 entry/libs/arm64-v8a/game/ 留下一个 87 MB 的
+    mindustry.so。
 
-WHY THIS IS A SCRIPT AND NOT A COPY COMMAND
-    This file is derived from a versioned artifact that was itself the product of
-    a multi-stage build (patch -> repack -> variant). This project has already
-    shipped a wrong jar once, by re-running an upstream stage and forgetting a
-    downstream one, and a stale library once more. So the source is identified by
-    its SHA-1, not by its file name, and the result is verified after the copy.
-    A mismatch aborts without touching the destination.
+    hvigor 只按【文件名以 .so 结尾】决定要不要把它拷进 HAP，从不检查
+    内容 —— 所以那个残留会**原样进包**，而构建**不会报任何错**。
+
+    ⇒ 必须有人主动清掉它。这个脚本就是那个人。
+    ⇒ 反过来说：删掉这个脚本，等于删掉「残留会被清掉」这件事本身。
+
+    ⚠️ 而且「没人会再去复制它」并不构成保证 —— 那是在赌没有人重跑旧
+    的构建链。产物侧的断言在 verify_hap.py 第 6 段，它要求这个文件
+    【不存在】；两者是同一件事的两道锁。
+
+WHY THE OLD JAR LIVED UNDER A *.so NAME, AND ONE LEVEL DOWN（历史，留着）
+    hvigor 只搬运文件名以 ".so" 结尾的东西，内容从不检查。一个 jar
+    按内容被 JVM 当作 class-path 条目打开，所以后缀对它不可见。
+    libs/arm64-v8a/ 顶层的名字是平台当作原生库对待的那些，而 jar 不是
+    一个；放到下面一层，正好与 module image 已经待的位置一致。
+
+    ⚠️ 那段历史仍然有用：**新的东西也不要放回顶层**，理由相同。
 
 Usage:  python prep_game.py [--check]
-        --check  verify only; do not copy
+        --check  verify only; do not remove
 """
 
 import argparse
-import hashlib
 import os
-import shutil
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -40,38 +43,8 @@ import config
 
 PROJECT_ROOT = config.PROJECT_ROOT
 
-# ⭐ 上游发布 jar，未修改 -- 与 Anuken 发布的内容逐字节一致。
-#
-# 2026-09-28 变更。这里以前复制音频修复过的变体，那是
-# build_arc_patch.py -> patch_mindustry.py -> build_variants.py 的产物。在
-# 当前架构下，这些都不会写进游戏 jar：我们的 Arc
-# 改动作为单独的 jar 在 class path 上排在它前面发布（make_patch_jar.py、
-# launcher.c 里的 PATCH_JAR），而 Arc natives 通过
-# prep_arc.py 来自 bundle。所以放进游戏槽位的就是原始 jar。
-#
-# 因此下面的哈希标识的是一个上游产物，这比过去是更强的
-# 陈述：两个 SHA-1 和文件名检查以前全都
-# 指向我们自己的多阶段输出，链中任何一处出错都会
-# 产生一个只有这个常量才能注意到的不同 jar。
-SRC = config.UPSTREAM_JAR
-
-# Mindustry v8 Build 160.5，官方桌面发布版。它的 version.properties
-# 写着 build=160.5, modifier=release, type=official。
-SRC_SHA1 = "8e0fd5d7dd7828fccff59a693a635948883a704b"
-
-DEST = os.path.join(PROJECT_ROOT,
-                    "entry", "libs", "arm64-v8a", "game", "mindustry.so")
-
-
-def sha1_of(path, chunk=1 << 20):
-    h = hashlib.sha1()
-    with open(path, "rb") as f:
-        while True:
-            b = f.read(chunk)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
+GAME_JAR = os.path.join(PROJECT_ROOT,
+                        "entry", "libs", "arm64-v8a", "game", "mindustry.so")
 
 
 def main():
@@ -79,41 +52,23 @@ def main():
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
 
-    if not os.path.isfile(SRC):
-        print("FAIL source jar is missing: %s" % SRC)
-        return 1
-
-    actual = sha1_of(SRC)
-    print("source : %s" % SRC)
-    print("size   : %d" % os.path.getsize(SRC))
-    print("sha1   : %s" % actual)
-    if actual != SRC_SHA1:
-        print("FAIL this is NOT the pinned artifact.")
-        print("     expected %s" % SRC_SHA1)
-        print("     Rebuild it through build_variants.py rather than using it as is.")
-        return 1
-    print("       -> matches the pinned variant")
+    if not os.path.isfile(GAME_JAR):
+        print("game jar : absent, as intended")
+        print("           %s" % GAME_JAR)
+        return 0
 
     if a.check:
-        if os.path.isfile(DEST):
-            ok = sha1_of(DEST) == SRC_SHA1
-            print("dest   : present, %s" % ("matches" if ok else "DIFFERS"))
-            return 0 if ok else 1
-        print("dest   : ABSENT")
+        print("FAIL a game jar is present: %s" % GAME_JAR)
+        print("     %d bytes. This build must not ship one."
+              % os.path.getsize(GAME_JAR))
+        print("     Remove it: python scripts/prep_game.py")
         return 1
 
-    os.makedirs(os.path.dirname(DEST), exist_ok=True)
-    shutil.copyfile(SRC, DEST)
-
-    # 校验实际落盘的内容，而不是我们打算写入的内容。
-    if sha1_of(DEST) != SRC_SHA1:
-        print("FAIL the copy does not match the source; removing it")
-        os.remove(DEST)
-        return 1
-
-    print("dest   : %s" % DEST)
-    print("       : %d bytes, sha1 verified" % os.path.getsize(DEST))
-    print("OK")
+    size = os.path.getsize(GAME_JAR)
+    os.remove(GAME_JAR)
+    print("game jar : removed, %d bytes" % size)
+    print("           %s" % GAME_JAR)
+    print("           Ark Launcher ships no game; the player supplies one.")
     return 0
 
 

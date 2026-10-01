@@ -10,12 +10,14 @@
 在 HarmonyOS / OpenHarmony 上用**自建启动器**运行 Mindustry —— 内嵌 JDK、从 native
 代码创建 JVM、把真正的 SDL3 窗口交给游戏，不套任何现成的模拟层。
 
-⚠️ **非官方项目。** 与 Mindustry 及 Anuken 无隶属关系。以 **GPL-3.0** 分发
-（构建产物再分发了 GPL-3.0 的 Mindustry）。
+⚠️ **非官方项目。** 与 Mindustry 及 Anuken 无隶属关系。以 **GPL-3.0** 分发 ——
+是 Mindustry 的衍生作品，但**自 2026-10-01 起构建产物【不含游戏本体】**：jar 由玩家自己提供。
+见 [`THIRD-PARTY.md`](THIRD-PARTY.md)。
 
-内嵌的游戏版本：**Mindustry `v8 Build 160.5`**（游戏内显示 `release build 160.5`）。
+本启动器验证所针对的游戏版本：**Mindustry `v8 Build 160.5`**（游戏内显示 `release build 160.5`）。
 ⚠️ 这是 **Mindustry 自己的**版本号，与本项目的版本号是**两套体系**，各走各的。
-⭐ 随包发布的这份游戏本体是**未经修改的上游原版** —— 与官方发布的那份文件**逐字节相同**。
+⛔ **不再随包分发游戏本体。** 把你自己的 `Mindustry.jar` 放进启动器显示的文件夹即可。
+验证所用的那份是**未经修改的上游原版** —— 与官方发布的那份文件**逐字节相同**。
 
 ## 下载哪个文件
 
@@ -267,12 +269,15 @@ a JVM created from native code, and a real SDL3 window handed to the game. No ex
 emulation layer involved.
 
 ⚠️ **Unofficial.** Not affiliated with, endorsed by, or supported by the Mindustry project
-or Anuken. Distributed under **GPL-3.0** (the build redistributes GPL-3.0 Mindustry).
+or Anuken. Distributed under **GPL-3.0** — a derivative of Mindustry, though since
+2026-10-01 the build ships **no game**: the player supplies the jar. See `THIRD-PARTY.md`.
 
-Embedded game version: **Mindustry `v8 Build 160.5`** (in-game: `release build 160.5`).
+Game version this launcher was verified against: **Mindustry `v8 Build 160.5`**
+(in-game: `release build 160.5`).
 ⚠️ That is the *game's* version, not this project's — the two move independently.
-⭐ The game binary shipped here is the **unmodified upstream release** — **byte for byte** the
-file Anuken publishes.
+⛔ **No game binary is shipped** (2026-10-01). Put your own `Mindustry.jar` into the folder
+the launcher shows you. The copy verified against was the **unmodified upstream release** —
+**byte for byte** the file Anuken publishes.
 
 ## Which file to download
 

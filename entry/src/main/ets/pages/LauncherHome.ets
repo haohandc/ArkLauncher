@@ -152,15 +152,16 @@ function formatDate(sec: number): string {
 
 @Component
 export struct LauncherHome {
-  /* [B] 两个都由 Index.ets 传进来 —— 它们是从 context 取的，而 context 只有页面拿得到。
+  /* [B] 由 Index.ets 传进来 —— 它是从 context 取的，而 context 只有页面拿得到。
    *
-   * ⚠️ 它们【不能】带 private：ArkTS 会拒绝从组件构造器初始化私有属性（实测是一条
+   * ⚠️ 它【不能】带 private：ArkTS 会拒绝从组件构造器初始化私有属性（实测是一条
    * 警告：「Property 'filesDir' is private and can not be initialized through the
    * component constructor」），而**那条警告的后果是值根本传不进来** —— 组件照常渲染，
-   * 只是两个路径都是空串。也就是说它会「构建成功、运行不正常」，比一个编译错误难查
-   * 得多。 */
+   * 只是路径是空串。也就是说它会「构建成功、运行不正常」，比一个编译错误难查得多。
+   *
+   * ⛔ 这里【曾经】还有第二个属性 `bundleCodeDir`。2026-10-01 删掉：它唯一的用途
+   * 是定位包里那份自带游戏，而本应用不再分发游戏本体。 */
   filesDir: string = '';
-  bundleCodeDir: string = '';
 
   /** [B] 玩家点了「启动游戏」。参数是最终决定要加载的那个 jar。 */
   onLaunch: (jarPath: string) => void = (jarPath: string) => {};
@@ -248,7 +249,7 @@ export struct LauncherHome {
     ensureGameJarDir(this.filesDir);
     this.games = listGameJars(this.filesDir);
     this.selected = readSelection(this.filesDir);
-    this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
+    this.resolution = resolveGame(this.filesDir);
     this.jarDirHint = gameJarDir(this.filesDir);
     hilog.info(DOMAIN, TAG, 'launcher: %{public}d jar(s), resolved=%{public}s (%{public}s)',
                this.games.length, this.resolution.path === '' ? '(none)' : this.resolution.path,
@@ -259,17 +260,12 @@ export struct LauncherHome {
   private pick(jarPath: string): void {
     this.selected = jarPath;
     writeSelection(this.filesDir, jarPath);
-    this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
-    hilog.info(DOMAIN, TAG, 'launcher: picked %{public}s', jarPath === '' ? '(bundled)' : jarPath);
+    this.resolution = resolveGame(this.filesDir);
+    hilog.info(DOMAIN, TAG, 'launcher: picked %{public}s', jarPath);
   }
 
-  /** [A] 退回内置的那一份。写一个【空的】选择，那是明确的「用包里的」，不是清除。 */
-  private pickBundled(): void {
-    this.selected = '';
-    writeSelection(this.filesDir, '');
-    this.resolution = resolveGame(this.filesDir, this.bundleCodeDir);
-    hilog.info(DOMAIN, TAG, 'launcher: picked (bundled)');
-  }
+  /* ⛔ 这里【曾经】有一个 `pickBundled()`：把选择写成空串，表示「用包里自带的那份」。
+   * 2026-10-01 删掉 —— 本应用不再分发游戏本体，没有「包里的那一份」可选。 */
 
   /** [A]
    * 内容一栏的宽度（vp）。**靠左**摆，见 CONTENT_MIN_VP。
@@ -338,9 +334,6 @@ export struct LauncherHome {
               .margin({ top: 8 })
               .textAlign(TextAlign.Center)
               .copyOption(CopyOptions.LocalDevice)
-            Text('内置游戏：' + (this.resolution.source === 'bundled' ? '有' : '无'))
-              .fontSize(12).fontColor($r('sys.color.font_secondary'))
-              .margin({ top: 12 })
           }
           .width('100%')
           .padding({ left: 24, right: 24, top: 40, bottom: 24 })
@@ -352,28 +345,9 @@ export struct LauncherHome {
            *    ⇒ 点击其实成功了（日志里 source=user 是对的），但 ✓ 不动，
            *      看起来就是「点了没反应」。
            */
+          /* ⛔ 列表的第一项【曾经】是「内置游戏」那一行，2026-10-01 删掉 ——
+           * 本应用不再分发游戏本体，没有「包里的那一份」可选。 */
           List({ space: 8 }) {
-            ListItem() {
-              Row() {
-                Column() {
-                  Text('内置游戏')
-                    .fontSize(16).fontColor($r('sys.color.font_primary'))
-                  Text(this.resolution.source === 'bundled' ? '正在使用' : '包里的那一份')
-                    .fontSize(12).fontColor($r('sys.color.font_secondary')).margin({ top: 2 })
-                }
-                .alignItems(HorizontalAlign.Start)
-                .layoutWeight(1)
-                if (this.selected === '') {
-                  Text('✓').fontSize(18).fontColor($r('sys.color.brand'))
-                }
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-            }
-            .backgroundColor($r('app.color.launcher_card'))
-            .borderRadius(CARD_RADIUS_VP)
-            .onClick(() => { this.pickBundled(); })
-
             ForEach(this.games, (g: GameJar) => {
               ListItem() {
                 Row() {

@@ -111,7 +111,20 @@
  * 它放在一个子目录里，而不是直接挨着 libmain.so。那个目录顶层的名字，是平台当作原生库对待的
  * 那些；而 jar 不是 ELF；让它低一层，正好与 module image 已经待的位置一致，且已知不会被碰。
  */
-#define GAME_JAR    BUNDLE_LIBS "/game/mindustry.so"
+/* [A]
+ * ⛔ 这一行【曾经】是 `#define GAME_JAR BUNDLE_LIBS "/game/mindustry.so"`。
+ * 2026-10-01 删掉：Ark Launcher 不再分发游戏本体，这个槽位里没有任何东西。
+ *
+ * ⚠️ 上面那段「为什么用 .so 之名、为什么放在子目录里」的说明【留着】——
+ * PATCH_JAR 和其它 jar 仍然走同一条路（见下面 PATCH_JAR 的注释）。
+ *
+ * ⇒ 「加载哪一个游戏」现在的唯一来源是 `gamejar=` 那一行桥接，
+ *    见 resolve_game_jar()。
+ *
+ * ⚠️ 产物侧的对应断言在 scripts/verify_hap.py 第 6 段：它要求
+ *    libs/arm64-v8a/game/mindustry.so 【不存在】。两者是同一件事的两道锁：
+ *    这道挡「没人会去复制它」，那道挡「上一次构建的残留进了包」。
+ */
 
 /* [A]
  * 我们的 Arc 修改，做成一个独立的 jar，排在 classpath 的【最前面】。
@@ -122,7 +135,7 @@
  *   现在游戏 jar 就是上游原版、一个字节都不改，我们的类放这里。
  *
  * 为什么这个顺序就是全部
- *   JVM 按 classpath 顺序解析类，先命中的赢。这个条目排在 GAME_JAR 前面，它里面的
+ *   JVM 按 classpath 顺序解析类，先命中的赢。这个条目排在游戏 jar 前面，它里面的
  *   26 个类因此压过游戏 jar 里的同名类。
  *   ⚠️ 这个顺序【是承重的】—— 挪到后面，补丁就完全不起作用，而应用看起来只是
  *   「行为不对」，不会报任何错。
@@ -330,7 +343,7 @@ static int read_user_dir(const char *key, char *out, size_t outlen)
  * 加载【哪一个】游戏 jar —— 这是启动器形态的核心，所以这里写清楚它为什么是这样。
  *
  * 为什么它必须是一个运行期的决定
- *   自带的那份固定在 bundle 里（GAME_JAR），换一个游戏版本就意味着重新构建、重新
+ *   从前的做法是把一份游戏固定在 bundle 里，于是换一个游戏版本就意味着重新构建、重新
  *   签名、再装一遍 171 MB。而启动器要做的是：玩家自己把若干个版本的 jar 丢进
  *   Downloads 里本应用的那个文件夹，在界面上挑一个。于是「用哪个 jar」从一个编译期
  *   常量，变成一个每次启动都要问一次的问题。
@@ -380,14 +393,20 @@ static int resolve_game_jar(void)
         /* [A] 值得单独一行：这一条正是「玩家删了一个 jar」在日志里留下的样子，
          * 而它后面的那行说清了接下来会发生什么。 */
         SDL_Log(" !! the chosen game jar is gone or is not a jar: %s", game_jar_path);
-        SDL_Log("    falling back to the bundled game");
     }
-    if (is_readable_jar(GAME_JAR)) {
-        SDL_strlcpy(game_jar_path, GAME_JAR, sizeof(game_jar_path));
-        SDL_Log("   game jar: %s  (bundled)", game_jar_path);
-        return 1;
-    }
+    /* [A]
+     * ⛔ 这里【曾经】有第二档：落回包里自带的那个游戏。
+     * 2026-10-01 删掉 —— Ark Launcher 不分发游戏本体，没有「包里那份」可落回。
+     * 解析链因此只剩一档：玩家挑的那个。
+     *
+     * ⭐ 这顺带消掉了一个一直存在的隐患：从前，一条记在那里、但文件已被删掉的
+     * 选择会【静默落回内置游戏】—— 玩家以为在用自己那个，实际在用内置的，
+     * 而界面上和日志里都没有任何东西说这件事。
+     * 现在没有可落回的东西，那种静默无从发生：判定失败就是失败，启动器会
+     * 明说「没有找到游戏」。
+     */
     game_jar_path[0] = 0;
+    SDL_Log(" !! no game jar: none was chosen in the launcher");
     return 0;
 }
 
@@ -1943,7 +1962,8 @@ done:
 static void report_shipped_files(void)
 {
     static const char *paths[] = {
-        GAME_JAR,
+        /* [A] 这里【曾经】列着 GAME_JAR。删掉：本应用不分发游戏本体，
+         * 而列一个必然 MISSING 的路径只会教人忽略这张表。 */
         LWJGL_LIBS "/liblwjgl.so",
         LWJGL_LIBS "/liblwjgl_opengl.so",
         BUNDLE_LIBS "/libSDL3.so",
@@ -2342,9 +2362,8 @@ static int start_jvm(void)
      * 日志，也不要起一个没有游戏可跑、却白占内存和表面的 VM。
      */
     if (!resolve_game_jar()) {
-        SDL_Log(" !! no game jar: nothing is bundled, and none was chosen in the launcher");
-        SDL_Log("    bundle slot: %s", GAME_JAR);
         SDL_Log("    refusing to create the JVM -- there would be nothing to run");
+        SDL_Log("    (a jar is chosen on the launcher screen, before this runs)");
         return 5;
     }
 
@@ -2428,8 +2447,9 @@ static int start_jvm(void)
      * 没有 org.lwjgl.* 就无法链接，所以找不到它们会在加载 application 的时候暴露出来，
      * 而不是在加载游戏 main class 的时候。
      * ⚠️ 第一个条目是补丁 jar，顺序承重 —— 见 PATCH_JAR 的注释。
-     * ⚠️ 第二个条目【不是】GAME_JAR 那个常量，而是它解析出来的结果 —— 玩家可能选了
-     *    别的版本。见 resolve_game_jar()。走到这一行时它必定非空，上面已经拒绝过。
+     * ⚠️ 第二个条目是 resolve_game_jar() 【解析出来】的路径，不是任何常量 ——
+     *    它是玩家在启动器里挑的那个 jar。⛔ 不再有「包里自带的那份」可落回
+     *    （2026-10-01）。走到这一行时它必定非空，上面已经拒绝过。
      */
     SDL_snprintf(opt_classpath, sizeof(opt_classpath),
                  "-Djava.class.path=%s:%s:%s/lwjgl.so:%s/lwjgl-opengl.so:%s/lwjgl-sdl.so:%s",
