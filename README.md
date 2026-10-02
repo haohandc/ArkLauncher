@@ -2,6 +2,25 @@
 
 [English](README.en.md) | **简体中文**
 
+> [!IMPORTANT]
+> **本仓库已归档（archived），只读。开发搬去了
+> [`MindustryArk` 的 `lite` 分支](https://github.com/haohandc/MindustryArk/tree/lite)。**
+>
+> 搬家的原因：Ark Launcher 与 Mindustry Ark 的**代码差异只有「带不带游戏本体」这一条**，
+> 而分成两个仓库意味着**每次上游改动都要人工同步一遍** —— 那份同步成本是真的，
+> 而收益只有「不用打一个开关」。改成同一个仓库的两个分支之后，
+> **`launcher.c` 与每一个 ArkTS 源文件在两个分支上逐字节相同**，
+> 差异只剩 [`scripts/config.py`](https://github.com/haohandc/MindustryArk/blob/lite/scripts/config.py)
+> 里的一行 `SHIPS_GAME = False`，加上应用名、图标与文档。
+>
+> ⭐ **本页描述的一切在 `lite` 分支上仍然成立** —— 不分发游戏本体、包名
+> `com.haohandc.arklauncher`、应用名 `Ark Launcher`，都在。
+> ⚠️ 只是**版本号跟上了上游**：本仓库停在上游 `1.2.0.1` 时的样子，而 `lite` 分支
+> 现在与上游**同号，都是 `1.3.0.1`** —— 也就是说它多了存档管理、版本隔离等上游后来加的功能。
+>
+> ⇒ **要下载、要报问题、要构建，都请去
+> [MindustryArk](https://github.com/haohandc/MindustryArk)。** 本仓库不再接收改动。
+
 ⭐ **上游仓库是 [Mindustry Ark](https://github.com/haohandc/MindustryArk)。**
 Ark Launcher 是它的一个分支 —— **把游戏本体去掉之后剩下的那部分**。
 
@@ -42,7 +61,8 @@ Ark Launcher 是它的一个分支 —— **把游戏本体去掉之后剩下的
 ⚠️ **包名不同 ⇒ 沙箱不同 ⇒ 存档、模组、设置不共通。** 两个应用可以并存在同一台设备上。
 
 ⭐ **版本号不在这张表里** —— 它不是一项差异。Ark Launcher 只做减法、自身没有新功能，
-所以**版本跟着上游走，两边同号**（现在都是 `1.2.0.1`）。
+所以**版本跟着上游走，两边同号**。（本仓库停在上游 `1.2.0.1` 时的样子；
+[`lite` 分支](https://github.com/haohandc/MindustryArk/tree/lite)现在是 `1.3.0.1`。）
 
 **其余全部与上游相同**，包括「在界面上挑一个 jar」那套东西 —— 上游也有。
 Ark Launcher 的差异是**把游戏拿掉**，不是加了什么功能。
